@@ -1,0 +1,68 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: finalplanner-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  celery-worker:
+    build:
+      context: ./backend
+    container_name: finalplanner-celery-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: celery -A app.tasks worker --loglevel=INFO
+    depends_on:
+      - backend
+      - redis
+  celery-beat:
+    build:
+      context: ./backend
+    container_name: finalplanner-celery-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: celery -A app.tasks beat --loglevel=INFO
+    depends_on:
+      - backend
+      - redis
+  db:
+    image: postgres:16-alpine
+    container_name: finalplanner-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: finalplanner
+      POSTGRES_USER: finalplanner
+      POSTGRES_PASSWORD: finalplanner
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finalplanner -d finalplanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: finalplanner-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
