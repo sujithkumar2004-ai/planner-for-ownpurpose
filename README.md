@@ -137,6 +137,7 @@ Frontend:
 2. Set root directory to `frontend`.
 3. Set `NEXT_PUBLIC_API_BASE_URL`.
 4. Push to `main`; Vercel auto-deploys.
+5. Configure `NEXT_PUBLIC_SENTRY_DSN` after creating the Sentry frontend project.
 
 Backend:
 
@@ -144,13 +145,22 @@ Backend:
 2. Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, and `SENTRY_DSN`.
 3. Use Supabase PostgreSQL and Upstash / Redis Cloud.
 4. Render auto-deploys on GitHub push.
+5. Health check path is `/health`.
+6. The Docker start command runs `alembic upgrade head` before Gunicorn/Uvicorn.
+7. Optional production seed is controlled by `RUN_PRODUCTION_SEED`, `PRODUCTION_SEED_EMAIL`, and `PRODUCTION_SEED_PASSWORD`.
 
 CI/CD:
 
 - `.github/workflows/ci.yml` builds frontend and compiles backend.
 - `.github/workflows/backend-cron.yml` can trigger an external cron URL if you prefer GitHub Actions scheduling.
+- `.github/workflows/render-smoke.yml` verifies production frontend and backend URLs after secrets are configured.
+
+Required hosted secrets:
+
+- Vercel: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_SENTRY_DSN`
+- Render: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
+- GitHub Actions: `BACKEND_HEALTH_URL`, `FRONTEND_URL`, optional `BACKEND_CRON_URL`
 
 ## Backups
 
 Use Supabase automated backups. For additional private backups, schedule encrypted `pg_dump` exports from Render cron or GitHub Actions into private object storage.
-

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     email_to: str = "skpersonal04@gmail.com"
     sentry_dsn: str = ""
     timezone: str = "Asia/Kolkata"
+    run_production_seed: bool = False
+    production_seed_email: str = ""
+    production_seed_name: str = "Sujith"
+    production_seed_password: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

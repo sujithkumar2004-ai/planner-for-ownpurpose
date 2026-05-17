@@ -13,6 +13,12 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "10080"
+      - key: CORS_ORIGINS
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
@@ -23,6 +29,8 @@ services:
         sync: false
       - key: WEB_CONCURRENCY
         value: "2"
+      - key: TIMEZONE
+        value: Asia/Kolkata
       - key: RUN_PRODUCTION_SEED
         value: "false"
       - key: PRODUCTION_SEED_EMAIL

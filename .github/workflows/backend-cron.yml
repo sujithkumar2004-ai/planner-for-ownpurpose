@@ -15,4 +15,3 @@ jobs:
           if [ -n "${{ secrets.BACKEND_CRON_URL }}" ]; then
             curl -fsS "${{ secrets.BACKEND_CRON_URL }}"
           fi
-
