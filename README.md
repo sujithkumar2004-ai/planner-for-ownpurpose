@@ -162,7 +162,27 @@ Required hosted secrets:
 
 - Vercel: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_SENTRY_DSN`
 - Railway: `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
-- GitHub Actions: `BACKEND_HEALTH_URL`, `FRONTEND_URL`, optional `BACKEND_CRON_URL`
+- GitHub Actions: `BACKEND_URL`, `FRONTEND_URL`, optional `BACKEND_CRON_URL`
+
+Railway GitHub auto-deploy:
+
+1. In Railway, create a new project from the GitHub repo.
+2. Select branch `main`.
+3. Enable automatic deploys for the web service.
+4. Create separate worker and beat services from the same repo, using `infra/railway-worker.json` and `infra/railway-beat.json`.
+5. Railway will deploy on each push to `main`; no CLI deployment is required.
+
+Deployment verification scripts:
+
+```bash
+scripts/verify-railway-env.sh .env.railway.example
+BACKEND_URL=https://your-backend.up.railway.app FRONTEND_URL=https://your-app.vercel.app scripts/verify-production-smoke.sh
+AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-authenticated-api.sh
+AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-email-alerts.sh
+scripts/verify-celery-config.sh
+```
+
+`verify-railway-env.sh` is expected to fail against `.env.railway.example` until every placeholder value is replaced with real Supabase, Upstash, Resend, Sentry, JWT, and Vercel values.
 
 ## Backups
 

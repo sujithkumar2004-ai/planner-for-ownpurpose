@@ -9,12 +9,9 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Backend health
-        run: |
-          test -n "${{ secrets.BACKEND_HEALTH_URL }}"
-          curl -fsS "${{ secrets.BACKEND_HEALTH_URL }}"
-      - name: Frontend load
-        run: |
-          test -n "${{ secrets.FRONTEND_URL }}"
-          curl -fsSI "${{ secrets.FRONTEND_URL }}"
-
+      - uses: actions/checkout@v4
+      - name: Production smoke
+        run: scripts/verify-production-smoke.sh
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}

@@ -19,6 +19,20 @@
 8. Set `RESEND_API_KEY`, `EMAIL_FROM`, and `EMAIL_TO`.
 9. The web service runs FastAPI through Gunicorn/Uvicorn. Worker runs Celery. Beat runs scheduled email jobs.
 
+Railway should be connected directly to GitHub with automatic deploys enabled on branch `main`. No manual CLI deploy is required after setup.
+
+## Verification
+
+```bash
+scripts/verify-railway-env.sh .env.railway.example
+BACKEND_URL=https://your-backend.up.railway.app FRONTEND_URL=https://your-app.vercel.app scripts/verify-production-smoke.sh
+AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-authenticated-api.sh
+AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-email-alerts.sh
+scripts/verify-celery-config.sh
+```
+
+Confirm Celery worker and beat are running in Railway service logs. Beat must show the daily 11:30 PM task and Sunday 9 PM task loaded from `app.celery_app`.
+
 ## Database: Supabase
 
 Use Supabase PostgreSQL for production. Run Alembic migrations from the backend service before deployment promotion:
