@@ -10,8 +10,14 @@ from app.auth import create_access_token, get_current_user, hash_password, verif
 from app.config import get_settings
 from app.database import get_db
 from app.email import send_daily_missed_task_email, send_weekly_summary_email
-from app.models import DailyTask, DistractionLog, ExamTopic, ExamTrack, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, TaskCategory, TaskLog, TravelBreak, User, Warning
+from app.models import DailyTask, DistractionLog, ExamTopic, ExamTrack, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, TaskCategory, TaskLog, TravelBreak, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
 from app.schemas import (
+    GoalCreate, GoalUpdate, GoalOut,
+    MilestoneCreate, MilestoneUpdate, MilestoneOut,
+    LifeTaskCreate, LifeTaskUpdate, LifeTaskOut,
+    HabitCreate, HabitOut, HabitLogCreate,
+    DailyCheckInCreate, DailyCheckInOut,
+    FocusSessionCreate, FocusSessionOut,
     DisciplineScoreOut,
     DistractionLogCreate,
     ExamOut,
@@ -340,3 +346,172 @@ def export_pdf(current_user: User = Depends(get_current_user), db: Session = Dep
         "trailer << /Root 1 0 R /Size 6 >>\nstartxref\n0\n%%EOF"
     )
     return Response(pdf.encode("utf-8"), media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=finalplanner-report.pdf"})
+
+
+# --- NEW LIFE OS ROUTES ---
+
+@app.get("/goals", response_model=list[GoalOut])
+def get_goals(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.scalars(select(Goal).where(Goal.user_id == current_user.id).order_by(Goal.target_date)).all()
+
+@app.post("/goals", response_model=GoalOut, status_code=status.HTTP_201_CREATED)
+def create_goal(payload: GoalCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    goal = Goal(user_id=current_user.id, **payload.model_dump())
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+@app.patch("/goals/{goal_id}", response_model=GoalOut)
+def update_goal(goal_id: int, payload: GoalUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    goal = db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(goal, field, value)
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+@app.delete("/goals/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_goal(goal_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    goal = db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    db.delete(goal)
+    db.commit()
+    return None
+
+@app.get("/milestones", response_model=list[MilestoneOut])
+def get_milestones(goal_id: int | None = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stmt = select(Milestone).join(Goal).where(Goal.user_id == current_user.id)
+    if goal_id:
+        stmt = stmt.where(Milestone.goal_id == goal_id)
+    return db.scalars(stmt.order_by(Milestone.target_date)).all()
+
+@app.post("/milestones", response_model=MilestoneOut, status_code=status.HTTP_201_CREATED)
+def create_milestone(payload: MilestoneCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    goal = db.scalar(select(Goal).where(Goal.id == payload.goal_id, Goal.user_id == current_user.id))
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    milestone = Milestone(**payload.model_dump())
+    db.add(milestone)
+    db.commit()
+    db.refresh(milestone)
+    return milestone
+
+@app.patch("/milestones/{milestone_id}", response_model=MilestoneOut)
+def update_milestone(milestone_id: int, payload: MilestoneUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    milestone = db.scalar(select(Milestone).join(Goal).where(Milestone.id == milestone_id, Goal.user_id == current_user.id))
+    if not milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(milestone, field, value)
+    db.commit()
+    db.refresh(milestone)
+    return milestone
+
+@app.get("/life-tasks", response_model=list[LifeTaskOut])
+def get_life_tasks(date: date | None = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stmt = select(LifeTask).where(LifeTask.user_id == current_user.id)
+    if date:
+        stmt = stmt.where(LifeTask.due_date == date)
+    return db.scalars(stmt.order_by(LifeTask.due_date, LifeTask.id)).all()
+
+@app.post("/life-tasks", response_model=LifeTaskOut, status_code=status.HTTP_201_CREATED)
+def create_life_task(payload: LifeTaskCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    task = LifeTask(user_id=current_user.id, **payload.model_dump())
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+@app.patch("/life-tasks/{task_id}", response_model=LifeTaskOut)
+def update_life_task(task_id: int, payload: LifeTaskUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    task = db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(task, field, value)
+    db.commit()
+    db.refresh(task)
+    return task
+
+@app.delete("/life-tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_life_task(task_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    task = db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.delete(task)
+    db.commit()
+    return None
+
+@app.get("/habits", response_model=list[HabitOut])
+def get_habits(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.scalars(select(Habit).where(Habit.user_id == current_user.id).order_by(Habit.id)).all()
+
+@app.post("/habits", response_model=HabitOut, status_code=status.HTTP_201_CREATED)
+def create_habit(payload: HabitCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    habit = Habit(user_id=current_user.id, **payload.model_dump())
+    db.add(habit)
+    db.commit()
+    db.refresh(habit)
+    return habit
+
+@app.post("/habits/{habit_id}/log", status_code=status.HTTP_201_CREATED)
+def log_habit(habit_id: int, payload: HabitLogCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    habit = db.scalar(select(Habit).where(Habit.id == habit_id, Habit.user_id == current_user.id))
+    if not habit:
+        raise HTTPException(status_code=404, detail="Habit not found")
+    
+    existing = db.scalar(select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == payload.log_date))
+    if existing:
+        existing.completed = payload.completed
+    else:
+        db.add(HabitLog(habit_id=habit_id, log_date=payload.log_date, completed=payload.completed))
+    
+    # Update streaks naively
+    if payload.completed:
+        habit.current_streak += 1
+        if habit.current_streak > habit.longest_streak:
+            habit.longest_streak = habit.current_streak
+    else:
+        habit.current_streak = 0
+
+    db.commit()
+    return {"message": "Habit logged"}
+
+@app.get("/dashboard/live")
+def dashboard_live(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    today = date.today()
+    
+    # Life Tasks
+    tasks = db.scalars(select(LifeTask).where(LifeTask.user_id == current_user.id, LifeTask.due_date == today)).all()
+    completed_tasks = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+    total_tasks = len(tasks)
+    today_progress = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+    
+    # Focus Sessions
+    sessions = db.scalars(select(FocusSession).where(FocusSession.user_id == current_user.id)).all()
+    today_focus = sum(s.duration_minutes for s in sessions if s.start_time.date() == today)
+    
+    # Habits
+    habits = db.scalars(select(Habit).where(Habit.user_id == current_user.id)).all()
+    habit_logs = db.scalars(select(HabitLog).join(Habit).where(Habit.user_id == current_user.id, HabitLog.log_date == today, HabitLog.completed.is_(True))).all()
+    habit_completion_rate = (len(habit_logs) / len(habits) * 100) if habits else 0
+
+    # Weekly Progress
+    week_start = today - timedelta(days=today.weekday())
+    weekly_tasks = db.scalars(select(LifeTask).where(LifeTask.user_id == current_user.id, LifeTask.due_date >= week_start, LifeTask.due_date <= today)).all()
+    weekly_completed = sum(1 for t in weekly_tasks if t.status == TaskStatus.COMPLETED)
+    weekly_total = len(weekly_tasks)
+    weekly_progress = (weekly_completed / weekly_total * 100) if weekly_total > 0 else 0
+
+    return {
+        "today_progress": round(today_progress, 1),
+        "weekly_progress": round(weekly_progress, 1),
+        "streak_count": sum(h.current_streak for h in habits),
+        "productivity_score": round((today_progress + habit_completion_rate) / 2, 1),
+        "focus_minutes": today_focus,
+        "habit_completion_rate": round(habit_completion_rate, 1)
+    }

@@ -39,6 +39,20 @@ class NotificationType(str, Enum):
     EMAIL = "email"
 
 
+class GoalStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    OVERDUE = "overdue"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -319,3 +333,99 @@ class UserSettings(Base):
     daily_min_score: Mapped[int] = mapped_column(Integer, default=70)
     weekly_min_score: Mapped[int] = mapped_column(Integer, default=75)
     distraction_limit_minutes: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[GoalStatus] = mapped_column(SAEnum(GoalStatus), default=GoalStatus.ACTIVE)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    milestones: Mapped[list["Milestone"]] = relationship(back_populates="goal", cascade="all, delete-orphan")
+    tasks: Mapped[list["LifeTask"]] = relationship(back_populates="goal")
+
+
+class Milestone(Base):
+    __tablename__ = "milestones"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    goal_id: Mapped[int] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    goal: Mapped[Goal] = relationship(back_populates="milestones")
+    tasks: Mapped[list["LifeTask"]] = relationship(back_populates="milestone")
+
+
+class LifeTask(Base):
+    __tablename__ = "life_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id", ondelete="SET NULL"), nullable=True, index=True)
+    milestone_id: Mapped[int | None] = mapped_column(ForeignKey("milestones.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    status: Mapped[TaskStatus] = mapped_column(SAEnum(TaskStatus), default=TaskStatus.PENDING)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estimated_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    goal: Mapped[Goal | None] = relationship(back_populates="tasks")
+    milestone: Mapped[Milestone | None] = relationship(back_populates="tasks")
+
+
+class Habit(Base):
+    __tablename__ = "habits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    frequency: Mapped[str] = mapped_column(String(50), default="daily")
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    longest_streak: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class HabitLog(Base):
+    __tablename__ = "habit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    habit_id: Mapped[int] = mapped_column(ForeignKey("habits.id", ondelete="CASCADE"), index=True)
+    log_date: Mapped[date] = mapped_column(Date, index=True)
+    completed: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    __table_args__ = (UniqueConstraint("habit_id", "log_date", name="uq_habit_log_date"),)
+
+
+class DailyCheckIn(Base):
+    __tablename__ = "daily_checkins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    log_date: Mapped[date] = mapped_column(Date, index=True)
+    mood_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    focus_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    productivity_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "log_date", name="uq_user_checkin_date"),)
+
+
+class FocusSession(Base):
+    __tablename__ = "focus_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("life_tasks.id", ondelete="SET NULL"), nullable=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=0)

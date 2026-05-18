@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import DisciplineStatus, TaskCategory, WarningLevel
+from app.models import DisciplineStatus, TaskCategory, WarningLevel, GoalStatus, TaskStatus
 
 
 class Token(BaseModel):
@@ -172,5 +172,139 @@ class NotificationOut(BaseModel):
     level: WarningLevel
     read: bool
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GoalCreate(BaseModel):
+    title: str
+    description: str | None = None
+    target_date: date | None = None
+
+
+class GoalUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    target_date: date | None = None
+    status: GoalStatus | None = None
+
+
+class GoalOut(BaseModel):
+    id: int
+    title: str
+    description: str | None
+    target_date: date | None
+    status: GoalStatus
+    progress_percent: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MilestoneCreate(BaseModel):
+    goal_id: int
+    title: str
+    target_date: date | None = None
+
+
+class MilestoneUpdate(BaseModel):
+    title: str | None = None
+    target_date: date | None = None
+    completed: bool | None = None
+
+
+class MilestoneOut(BaseModel):
+    id: int
+    goal_id: int
+    title: str
+    target_date: date | None
+    completed: bool
+
+    model_config = {"from_attributes": True}
+
+
+class LifeTaskCreate(BaseModel):
+    goal_id: int | None = None
+    milestone_id: int | None = None
+    title: str
+    due_date: date | None = None
+    estimated_minutes: int | None = None
+
+
+class LifeTaskUpdate(BaseModel):
+    title: str | None = None
+    status: TaskStatus | None = None
+    due_date: date | None = None
+    estimated_minutes: int | None = None
+    actual_minutes: int | None = None
+
+
+class LifeTaskOut(BaseModel):
+    id: int
+    goal_id: int | None
+    milestone_id: int | None
+    title: str
+    status: TaskStatus
+    due_date: date | None
+    estimated_minutes: int | None
+    actual_minutes: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HabitCreate(BaseModel):
+    title: str
+    frequency: str = "daily"
+
+
+class HabitOut(BaseModel):
+    id: int
+    title: str
+    frequency: str
+    current_streak: int
+    longest_streak: int
+
+    model_config = {"from_attributes": True}
+
+
+class HabitLogCreate(BaseModel):
+    habit_id: int
+    log_date: date
+    completed: bool = True
+
+
+class DailyCheckInCreate(BaseModel):
+    log_date: date
+    mood_score: int | None = None
+    focus_score: int | None = None
+    productivity_score: int | None = None
+    notes: str | None = None
+
+
+class DailyCheckInOut(BaseModel):
+    id: int
+    log_date: date
+    mood_score: int | None
+    focus_score: int | None
+    productivity_score: int | None
+    notes: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class FocusSessionCreate(BaseModel):
+    task_id: int | None = None
+    start_time: datetime
+    end_time: datetime | None = None
+    duration_minutes: int
+
+
+class FocusSessionOut(BaseModel):
+    id: int
+    task_id: int | None
+    start_time: datetime
+    end_time: datetime | None
+    duration_minutes: int
 
     model_config = {"from_attributes": True}

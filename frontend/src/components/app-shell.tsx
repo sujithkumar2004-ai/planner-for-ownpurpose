@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, BarChart3, CalendarDays, Download, Dumbbell, GraduationCap, Home, Mail, Moon, Plane, Server, Settings, ShieldCheck, Smartphone, TriangleAlert, Workflow, ListChecks, ZapOff, LogOut } from "lucide-react";
+import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 
@@ -38,44 +39,64 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="app-grid min-h-screen bg-black text-white">
-      <aside className="border-r border-zinc-800 bg-zinc-950 px-4 py-5 flex flex-col h-screen sticky top-0 overflow-y-auto hidden-scrollbar">
+    <div className="app-grid min-h-screen bg-black text-white relative selection:bg-purple-500/30">
+      {/* Background ambient light */}
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
+      
+      <aside className="border-r border-white/5 bg-black/40 backdrop-blur-2xl px-4 py-6 flex flex-col h-screen sticky top-0 overflow-y-auto hidden-scrollbar z-10">
         <div className="flex-1">
-          <Link href="/dashboard" className="mb-8 flex items-center gap-3 px-2">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-tr from-blue-600 to-purple-600 text-sm font-bold text-white shadow-lg shadow-purple-500/20">FP</div>
+          <Link href="/dashboard" className="mb-8 flex items-center gap-3 px-2 group">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 text-sm font-bold text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] group-hover:shadow-[0_0_25px_rgba(168,85,247,0.6)] transition-all">FP</div>
             <div>
-              <p className="font-bold tracking-tight text-zinc-100">FinalPlanner</p>
-              <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">Private Life OS</p>
+              <p className="font-bold tracking-tight text-zinc-100 group-hover:text-white transition-colors">FinalPlanner</p>
+              <p className="text-[11px] font-medium uppercase tracking-widest text-zinc-500">Life OS</p>
             </div>
           </Link>
           <nav className="grid gap-1">
-            {nav.map(([href, label, Icon]) => (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm text-zinc-400 transition-all hover:bg-zinc-900 hover:text-zinc-100",
-                  pathname === href && "bg-zinc-800 font-semibold text-white shadow-inner"
-                )}
-              >
-                <Icon className={cn("h-4 w-4", pathname === href ? "text-purple-400" : "")} />
-                <span>{label}</span>
-              </Link>
-            ))}
+            {nav.map(([href, label, Icon]) => {
+              const isActive = pathname === href;
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={cn(
+                    "relative flex min-h-[38px] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-all group",
+                    isActive 
+                      ? "text-white bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]" 
+                      : "text-zinc-400 hover:text-zinc-100 hover:bg-white/5"
+                  )}
+                >
+                  {isActive && (
+                    <motion.div 
+                      layoutId="active-nav-indicator"
+                      className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-gradient-to-b from-purple-400 to-indigo-500 rounded-r-full"
+                      initial={false}
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
+                  <Icon className={cn("h-4 w-4 transition-colors", isActive ? "text-purple-400" : "group-hover:text-zinc-300")} />
+                  <span>{label}</span>
+                </Link>
+              );
+            })}
           </nav>
         </div>
         
-        <div className="mt-8 pt-4 border-t border-zinc-800">
+        <div className="mt-8 pt-4 border-t border-white/5">
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-zinc-400 hover:bg-red-500/10 hover:text-red-400 transition-all"
+            className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all font-medium group"
           >
-            <LogOut className="h-4 w-4" />
-            <span className="font-medium">Sign Out</span>
+            <LogOut className="h-4 w-4 group-hover:scale-110 transition-transform" />
+            <span>Sign Out</span>
           </button>
         </div>
       </aside>
-      <main className="min-w-0 p-4 sm:p-6 lg:p-8 bg-zinc-950">{children}</main>
+      <main className="min-w-0 p-4 sm:p-6 lg:p-8 relative z-0">
+        <div className="mx-auto max-w-7xl">
+          {children}
+        </div>
+      </main>
     </div>
   );
 }
