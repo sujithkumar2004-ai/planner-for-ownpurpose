@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.config import get_settings
-from app.database import Base, engine, get_db
+from app.database import get_db
 from app.email import send_daily_missed_task_email, send_weekly_summary_email
 from app.models import DailyTask, DistractionLog, ExamTopic, ExamTrack, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, TaskCategory, TaskLog, TravelBreak, User, Warning
 from app.schemas import (
@@ -38,8 +38,6 @@ from app.services import build_weekly_review, calculate_daily_discipline_score, 
 settings = get_settings()
 if settings.sentry_dsn:
     sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="FinalPlanner Life OS API")
 app.add_middleware(
