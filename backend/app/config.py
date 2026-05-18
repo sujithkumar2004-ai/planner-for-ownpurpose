@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,10 +29,20 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
+    def sqlalchemy_database_url(self) -> str:
+        return normalize_sqlalchemy_url(self.database_url)
+
+    @property
     def migration_database_url(self) -> str:
-        return self.direct_url or self.database_url
+        return normalize_sqlalchemy_url(self.direct_url or self.database_url)
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def normalize_sqlalchemy_url(url: str) -> str:
+    parts = urlsplit(url)
+    query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "pgbouncer"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
