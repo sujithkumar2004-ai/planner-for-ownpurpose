@@ -9,7 +9,7 @@ Private production-grade discipline enforcement platform for exam preparation, b
 - Auth: JWT
 - Email: Resend
 - Monitoring: Sentry and structured logging hooks
-- Deployment: Vercel frontend, Render backend, Supabase PostgreSQL, Upstash / Redis Cloud
+- Deployment: Vercel frontend, Railway backend, Supabase PostgreSQL, Upstash Redis
 
 ## Repository Structure
 
@@ -141,26 +141,29 @@ Frontend:
 
 Backend:
 
-1. Create a Render Blueprint using `infra/render.yaml`.
-2. Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, and `SENTRY_DSN`.
-3. Use Supabase PostgreSQL and Upstash / Redis Cloud.
-4. Render auto-deploys on GitHub push.
-5. Health check path is `/health`.
-6. The Docker start command runs `alembic upgrade head` before Gunicorn/Uvicorn.
-7. Optional production seed is controlled by `RUN_PRODUCTION_SEED`, `PRODUCTION_SEED_EMAIL`, and `PRODUCTION_SEED_PASSWORD`.
+1. Create a Railway project connected to the GitHub repository.
+2. Add one Railway service for the FastAPI web backend using root `railway.json`.
+3. Add a second Railway service for the Celery worker and set its Railway config to `infra/railway-worker.json`.
+4. Add a third Railway service for Celery beat and set its Railway config to `infra/railway-beat.json`.
+5. Set `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, and `SENTRY_DSN`.
+6. Use Supabase PostgreSQL and Upstash Redis.
+7. Railway auto-deploys on GitHub push.
+8. Health check path is `/health`.
+9. The web service runs `alembic upgrade head` before Gunicorn/Uvicorn.
+10. Optional production seed is controlled by `RUN_PRODUCTION_SEED`, `PRODUCTION_SEED_EMAIL`, and `PRODUCTION_SEED_PASSWORD`.
 
 CI/CD:
 
 - `.github/workflows/ci.yml` builds frontend and compiles backend.
 - `.github/workflows/backend-cron.yml` can trigger an external cron URL if you prefer GitHub Actions scheduling.
-- `.github/workflows/render-smoke.yml` verifies production frontend and backend URLs after secrets are configured.
+- `.github/workflows/railway-smoke.yml` verifies production frontend and backend URLs after secrets are configured.
 
 Required hosted secrets:
 
 - Vercel: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_SENTRY_DSN`
-- Render: `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
+- Railway: `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
 - GitHub Actions: `BACKEND_HEALTH_URL`, `FRONTEND_URL`, optional `BACKEND_CRON_URL`
 
 ## Backups
 
-Use Supabase automated backups. For additional private backups, schedule encrypted `pg_dump` exports from Render cron or GitHub Actions into private object storage.
+Use Supabase automated backups. For additional private backups, schedule encrypted `pg_dump` exports from Railway cron or GitHub Actions into private object storage.

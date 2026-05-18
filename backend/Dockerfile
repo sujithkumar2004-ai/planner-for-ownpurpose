@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
-COPY start.sh .
-RUN chmod +x start.sh
+COPY start.sh start-worker.sh start-beat.sh ./
+RUN chmod +x start.sh start-worker.sh start-beat.sh
 
 CMD ["./start.sh"]
