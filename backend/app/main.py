@@ -69,9 +69,14 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> Token:
 
 @app.post("/auth/login", response_model=Token)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
-    user = db.scalar(select(User).where(User.email == payload.email))
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if payload.email != settings.admin_email or payload.password != settings.admin_password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if not user:
+        user = User(email=settings.admin_email, name="Admin", hashed_password=hash_password(settings.admin_password))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     seed_user_defaults(db, user)
     return Token(access_token=create_access_token(str(user.id)))
 

@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     production_seed_email: str = ""
     production_seed_name: str = "Sujith"
     production_seed_password: str = ""
+    admin_email: str = "admin@example.com"
+    admin_password: str = "password"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
     def cors_origin_list(self) -> list[str]:
