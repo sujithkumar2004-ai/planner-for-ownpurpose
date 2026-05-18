@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, TriangleAlert, TrendingUp, Calendar, AlertCircle } from "lucide-react";
+import { Check, Loader2, TriangleAlert, TrendingUp, Calendar, AlertCircle, GraduationCap, ListChecks } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { apiFetch, type Dashboard } from "@/lib/api";
