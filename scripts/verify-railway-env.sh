@@ -32,7 +32,7 @@ missing=()
 for key in "${required[@]}"; do
   if [[ -z "${!key:-}" ]]; then
     missing+=("$key")
-  elif [[ "${!key}" == *"<"* || "${!key}" == *">"* ]]; then
+  elif [[ "$key" != "EMAIL_FROM" && ( "${!key}" == *"<"* || "${!key}" == *">"* ) ]]; then
     missing+=("$key has placeholder value")
   fi
 done
