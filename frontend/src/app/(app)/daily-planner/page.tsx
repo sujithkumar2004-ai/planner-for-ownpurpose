@@ -1,21 +1,39 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { apiFetch, LifeTask, TaskStatus } from "@/lib/api";
-import { Check, Clock, Play, MoreVertical, Plus, CheckCircle2, Loader2, X } from "lucide-react";
+import { apiFetch, GeneratedTask, TaskStatus, TravelMode } from "@/lib/api";
+import { Check, Clock, Play, MoreVertical, CheckCircle2, Loader2, Plane, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 export default function DailyPlannerPage() {
-  const [isAdding, setIsAdding] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
-  const { data: tasks, error, mutate } = useSWR<LifeTask[]>(`/life-tasks?date=${today}`, apiFetch);
+  const { data: tasks, error, mutate } = useSWR<GeneratedTask[]>(`/generated-daily-tasks?date=${today}`, apiFetch);
+  const { data: travelMode, mutate: mutateTravel } = useSWR<TravelMode>("/travel-mode", apiFetch);
 
-  const toggleTask = async (task: LifeTask) => {
+  useEffect(() => {
+    const raw = localStorage.getItem("finalplanner_pending_task_actions");
+    if (!raw) return;
+    const queued = JSON.parse(raw) as Array<{ taskId: number; status: TaskStatus }>;
+    if (queued.length === 0) return;
+    Promise.allSettled(
+      queued.map((action) =>
+        apiFetch(`/generated-daily-tasks/${action.taskId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: action.status })
+        })
+      )
+    ).then((results) => {
+      const remaining = queued.filter((_, index) => results[index].status === "rejected");
+      localStorage.setItem("finalplanner_pending_task_actions", JSON.stringify(remaining));
+      mutate();
+    });
+  }, [mutate]);
+
+  const toggleTask = async (task: GeneratedTask) => {
     const newStatus: TaskStatus = task.status === "completed" ? "pending" : "completed";
     
     // Optimistic update
@@ -25,37 +43,42 @@ export default function DailyPlannerPage() {
     );
 
     try {
-      await apiFetch(`/life-tasks/${task.id}`, {
+      await apiFetch(`/generated-daily-tasks/${task.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: newStatus })
       });
       mutate(); // Re-validate
     } catch (e) {
       console.error(e);
-      mutate(); // Rollback
+      const raw = localStorage.getItem("finalplanner_pending_task_actions");
+      const queued = raw ? JSON.parse(raw) as Array<{ taskId: number; status: TaskStatus }> : [];
+      localStorage.setItem("finalplanner_pending_task_actions", JSON.stringify([...queued, { taskId: task.id, status: newStatus }]));
+      mutate();
     }
   };
 
-  const handleAddTask = async () => {
-    if (!newTaskTitle.trim()) return;
+  const regenerate = async (force = false) => {
     setIsSubmitting(true);
     try {
-      await apiFetch("/life-tasks", {
+      await apiFetch(`/generated-daily-tasks/generate?date=${today}&force=${force}`, {
         method: "POST",
-        body: JSON.stringify({
-          title: newTaskTitle,
-          due_date: today,
-          status: "pending"
-        })
       });
-      setNewTaskTitle("");
-      setIsAdding(false);
       mutate();
     } catch (e) {
       console.error(e);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const toggleTravelMode = async () => {
+    const enabled = !travelMode?.enabled;
+    await apiFetch("/travel-mode", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled, allow_mock_tests: travelMode?.allow_mock_tests ?? false, daily_minutes: enabled ? 90 : 240, notes: enabled ? "Lightweight travel schedule" : null })
+    });
+    mutateTravel();
+    mutate();
   };
 
   if (error) return <div className="text-red-400 p-8 text-center bg-red-900/10 rounded-2xl border border-red-500/20">Failed to load tasks.</div>;
@@ -69,16 +92,29 @@ export default function DailyPlannerPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white">Daily Execution</h1>
-          <p className="text-sm text-zinc-400 mt-1">Focus on one thing at a time.</p>
+          <p className="text-sm text-zinc-400 mt-1">Generated from exams, syllabus progress, backlog, and travel mode.</p>
         </div>
+        <button
+          onClick={toggleTravelMode}
+          className={cn("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border", travelMode?.enabled ? "bg-sky-500/20 text-sky-200 border-sky-400/30" : "bg-white/10 hover:bg-white/15 text-white border-white/5")}
+        >
+          <Plane className="h-4 w-4" />
+          Travel {travelMode?.enabled ? "On" : "Off"}
+        </button>
         <button 
-          onClick={() => setIsAdding(true)}
+          onClick={() => regenerate(true)}
           className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg text-sm font-medium transition-colors border border-white/5"
         >
-          <Plus className="h-4 w-4" />
-          Add Task
+          <RefreshCw className="h-4 w-4" />
+          Regenerate
         </button>
       </div>
+
+      {travelMode?.enabled && (
+        <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-4 text-sm text-sky-100">
+          Travel Mode is on. The generator is reducing workload and prioritizing revision, formulas, reading, and short analysis.
+        </div>
+      )}
 
       <div className="grid gap-6">
         <div className="relative border-l-2 border-white/10 ml-4 space-y-6 pb-8">
@@ -91,6 +127,11 @@ export default function DailyPlannerPage() {
                 <motion.div 
                   key={task.id}
                   layout
+                  drag="x"
+                  dragConstraints={{ left: 0, right: 0 }}
+                  onDragEnd={(_, info) => {
+                    if (info.offset.x > 100 && task.status !== "completed") toggleTask(task);
+                  }}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
@@ -141,8 +182,9 @@ export default function DailyPlannerPage() {
                           <div className="flex items-center gap-3 mt-1.5 text-xs font-medium text-zinc-500 uppercase tracking-widest">
                             <span className="flex items-center gap-1.5">
                               <Clock className="h-3.5 w-3.5" />
-                              {task.estimated_minutes ? `${task.estimated_minutes} min` : 'Unestimated'}
+                              {task.estimated_minutes} min · {task.task_type}
                             </span>
+                            <span>{task.exam_name ?? "Life OS"}{task.topic_name ? ` / ${task.topic_name}` : ""}</span>
                             {isActive && (
                               <span className="flex items-center gap-1 text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-sm">
                                 <Play className="h-3 w-3 fill-current" />
@@ -162,51 +204,17 @@ export default function DailyPlannerPage() {
               );
             })}
             
-            {isAdding && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="relative pl-8"
-              >
-                <div className="rounded-2xl border border-white/20 bg-black/40 p-5">
-                  <div className="flex items-center gap-3">
-                    <input 
-                      autoFocus
-                      type="text" 
-                      placeholder="What needs to be done?" 
-                      value={newTaskTitle}
-                      onChange={e => setNewTaskTitle(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && handleAddTask()}
-                      className="flex-1 bg-transparent border-none outline-none text-white placeholder-zinc-500 text-lg"
-                    />
-                    <button 
-                      onClick={() => setIsAdding(false)}
-                      className="p-2 hover:bg-white/10 rounded-full text-zinc-400 hover:text-white"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={handleAddTask}
-                      disabled={!newTaskTitle.trim() || isSubmitting}
-                      className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-                    >
-                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
           </AnimatePresence>
         </div>
         
-        {tasks.length === 0 && !isAdding && (
+        {tasks.length === 0 && (
           <div className="text-center py-12 px-4 rounded-3xl border border-dashed border-white/10 bg-white/5">
-            <p className="text-zinc-500 mb-4">No tasks scheduled for today.</p>
+            <p className="text-zinc-500 mb-4">No generated tasks for today.</p>
             <button 
-              onClick={() => setIsAdding(true)}
+              onClick={() => regenerate(false)}
               className="text-purple-400 font-medium hover:text-purple-300 transition-colors"
             >
-              Add your first task
+              Generate today&apos;s plan
             </button>
           </div>
         )}

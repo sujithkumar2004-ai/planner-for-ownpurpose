@@ -16,5 +16,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.send_weekly_summary_emails",
         "schedule": crontab(hour=21, minute=0, day_of_week="sun"),
     },
+    "refresh-exam-dates-daily": {
+        "task": "app.tasks.refresh_exam_dates",
+        "schedule": crontab(hour=5, minute=30),
+    },
 }
-

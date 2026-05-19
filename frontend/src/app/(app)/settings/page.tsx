@@ -1,25 +1,42 @@
-import { Moon, Sun } from "lucide-react";
+"use client";
 
-import { Button } from "@/components/ui/button";
+import useSWR from "swr";
+import { Loader2, Plane, Settings } from "lucide-react";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { apiFetch, LifeSettings } from "@/lib/api";
 
 export default function SettingsPage() {
+  const { data, error, isLoading } = useSWR<LifeSettings>("/settings/life-os", apiFetch);
+
+  if (isLoading) return <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-purple-500" /></div>;
+  if (error) return <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-6 text-red-100">Settings could not be loaded from the backend.</div>;
+
   return (
     <div className="grid gap-5">
-      <h1 className="text-2xl font-semibold">Settings</h1>
+      <div>
+        <h1 className="text-2xl font-semibold">Settings</h1>
+        <p className="text-sm text-muted-foreground">Exam selection, daily capacity, travel preferences, notifications, and date overrides are stored in the backend.</p>
+      </div>
       <Card>
-        <CardHeader><CardTitle>Profile & API</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Settings className="h-5 w-5" /> Selected Exams</CardTitle></CardHeader>
         <CardContent className="grid gap-3">
-          <Input placeholder="Name" />
-          <Input placeholder="API base URL" defaultValue={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"} />
-          <div className="flex flex-wrap gap-2">
-            <Button><Sun className="h-4 w-4" /> Light</Button>
-            <Button className="bg-card text-foreground ring-1 ring-border"><Moon className="h-4 w-4" /> Dark</Button>
-          </div>
+          {data?.selected_exams.map((plan) => (
+            <div key={plan.exam_id} className="flex items-center justify-between rounded-md border border-border p-3 text-sm">
+              <span>{plan.exam_name}</span>
+              <span className="text-muted-foreground">{plan.active ? "Active" : "Paused"} · {plan.available_hours_per_day}h/day</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Plane className="h-5 w-5" /> Travel Mode</CardTitle></CardHeader>
+        <CardContent className="grid gap-2 text-sm text-muted-foreground">
+          <p>Status: {data?.travel_mode.enabled ? "On" : "Off"}</p>
+          <p>Daily minutes: {data?.travel_mode.daily_minutes}</p>
+          <p>Mock tests while travelling: {data?.travel_mode.allow_mock_tests ? "Allowed" : "Avoided"}</p>
         </CardContent>
       </Card>
     </div>
   );
 }
-

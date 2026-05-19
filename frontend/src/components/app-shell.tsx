@@ -29,6 +29,8 @@ const nav = [
   ["/settings", "Settings", Settings]
 ] as const;
 
+const mobileNav = nav.slice(0, 5);
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -92,11 +94,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
-      <main className="min-w-0 p-4 sm:p-6 lg:p-8 relative z-0">
+      <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8 relative z-0">
         <div className="mx-auto max-w-7xl">
           {children}
         </div>
       </main>
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-white/10 bg-black/90 px-2 py-2 backdrop-blur-xl lg:hidden">
+        {mobileNav.map(([href, label, Icon]) => {
+          const isActive = pathname === href;
+          return (
+            <Link key={href} href={href} className={cn("grid justify-items-center gap-1 rounded-md px-1 py-2 text-[11px]", isActive ? "text-white" : "text-zinc-500")}>
+              <Icon className={cn("h-5 w-5", isActive ? "text-purple-400" : "text-zinc-500")} />
+              <span className="max-w-full truncate">{label.replace("Daily Planner", "Planner")}</span>
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }

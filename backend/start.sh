@@ -2,6 +2,9 @@
 set -eu
 
 alembic upgrade head
+if [ -n "${LIFE_OS_DATABASE_URL:-}" ]; then
+  alembic -c life_os_alembic.ini upgrade head
+fi
 python -m app.production_seed
 
 exec gunicorn app.main:app \

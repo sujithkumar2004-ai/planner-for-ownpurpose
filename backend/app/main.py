@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import sentry_sdk
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -9,10 +9,32 @@ from sqlalchemy.orm import Session, selectinload
 from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.config import get_settings
 from app.database import get_db
+from app.life_os_database import get_life_os_db
 from app.email import send_daily_missed_task_email, send_weekly_summary_email
-from app.models import DailyTask, DistractionLog, ExamTopic, ExamTrack, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, TaskCategory, TaskLog, TravelBreak, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
+from app.life_os import (
+    build_life_os_analytics,
+    build_life_os_notifications,
+    build_life_os_settings,
+    build_life_os_weekly_review,
+    build_live_dashboard,
+    complete_generated_task,
+    ensure_exam_catalog,
+    generate_daily_tasks,
+    get_travel_settings,
+    refresh_exam_dates,
+    task_payload,
+    update_productivity_log,
+)
+from app.models import CalendarEvent, DailyTask, DistractionLog, Exam, ExamDate, ExamDateStatus, ExamTopic, ExamTrack, GeneratedDailyTask, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, StudyPlan, SyllabusSubject, TaskCategory, TaskLog, TravelBreak, TravelModeSettings, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
 from app.schemas import (
+    BackendExamOut,
+    CalendarEventCreate,
+    CalendarEventOut,
+    CalendarEventUpdate,
+    ExamDateOverride,
     GoalCreate, GoalUpdate, GoalOut,
+    GeneratedTaskOut,
+    GeneratedTaskUpdate,
     MilestoneCreate, MilestoneUpdate, MilestoneOut,
     LifeTaskCreate, LifeTaskUpdate, LifeTaskOut,
     HabitCreate, HabitOut, HabitLogCreate,
@@ -32,6 +54,9 @@ from app.schemas import (
     TaskCreate,
     TaskOut,
     Token,
+    TravelModeOut,
+    TravelModeUpdate,
+    StudyPlanCreate,
     TravelBreakCreate,
     UserCreate,
     WarningOut,
@@ -124,6 +149,141 @@ def daily_plan(date: date | None = None, current_user: User = Depends(get_curren
         db.commit()
         tasks = db.scalars(select(DailyTask).where(DailyTask.user_id == current_user.id, DailyTask.task_date == target_date).order_by(DailyTask.start_time)).all()
     return tasks
+
+
+@app.get("/exams/catalog", response_model=list[BackendExamOut])
+def exams_catalog(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[Exam]:
+    ensure_exam_catalog(life_db, current_user.id)
+    return life_db.scalars(select(Exam).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)).order_by(Exam.id)).all()
+
+
+@app.post("/exams/refresh-dates")
+def refresh_dates(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    refreshed = refresh_exam_dates(life_db)
+    return {"refreshed": len(refreshed), "dates": [{"exam_id": item.exam_id, "exam_date": item.exam_date.isoformat(), "status": item.status.value} for item in refreshed]}
+
+
+@app.patch("/exams/{exam_id}/date", response_model=BackendExamOut)
+def override_exam_date(exam_id: int, payload: ExamDateOverride, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> Exam:
+    ensure_exam_catalog(life_db, current_user.id)
+    exam = life_db.scalar(select(Exam).where(Exam.id == exam_id))
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    exam_date = life_db.scalar(select(ExamDate).where(ExamDate.exam_id == exam.id, ExamDate.label == payload.label)) or ExamDate(exam_id=exam.id, label=payload.label)
+    exam_date.exam_date = payload.exam_date
+    exam_date.status = ExamDateStatus.MANUAL_OVERRIDE
+    exam_date.manually_overridden = True
+    exam_date.source_name = payload.source_name
+    exam_date.refreshed_at = datetime.utcnow()
+    life_db.add(exam_date)
+    life_db.commit()
+    return life_db.scalar(select(Exam).where(Exam.id == exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
+
+
+@app.get("/study-plans")
+def study_plans(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    ensure_exam_catalog(life_db, current_user.id)
+    plans = life_db.scalars(select(StudyPlan).where(StudyPlan.user_id == current_user.id)).all()
+    exams_by_id = {exam.id: exam for exam in life_db.scalars(select(Exam)).all()}
+    return [{"id": plan.id, "exam_id": plan.exam_id, "exam_name": exams_by_id[plan.exam_id].name, "active": plan.active, "available_hours_per_day": plan.available_hours_per_day} for plan in plans if plan.exam_id in exams_by_id]
+
+
+@app.post("/study-plans")
+def upsert_study_plan(payload: StudyPlanCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    ensure_exam_catalog(life_db, current_user.id)
+    exam = life_db.scalar(select(Exam).where(Exam.id == payload.exam_id))
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    plan = life_db.scalar(select(StudyPlan).where(StudyPlan.user_id == current_user.id, StudyPlan.exam_id == payload.exam_id)) or StudyPlan(user_id=current_user.id, exam_id=payload.exam_id)
+    plan.active = payload.active
+    plan.available_hours_per_day = payload.available_hours_per_day
+    life_db.add(plan)
+    life_db.commit()
+    life_db.refresh(plan)
+    return {"id": plan.id, "exam_id": plan.exam_id, "active": plan.active, "available_hours_per_day": plan.available_hours_per_day}
+
+
+@app.get("/generated-daily-tasks", response_model=list[GeneratedTaskOut])
+def generated_tasks(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return [task_payload(life_db, task) for task in generate_daily_tasks(life_db, current_user.id, date)]
+
+
+@app.post("/generated-daily-tasks/generate", response_model=list[GeneratedTaskOut])
+def regenerate_tasks(date: date | None = None, force: bool = False, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return [task_payload(life_db, task) for task in generate_daily_tasks(life_db, current_user.id, date, force=force)]
+
+
+@app.patch("/generated-daily-tasks/{task_id}", response_model=GeneratedTaskOut)
+def update_generated_task(task_id: int, payload: GeneratedTaskUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    task = complete_generated_task(life_db, current_user.id, task_id, payload.status)
+    if not task:
+        raise HTTPException(status_code=404, detail="Generated task not found")
+    return task_payload(life_db, task)
+
+
+@app.get("/calendar-events", response_model=list[CalendarEventOut])
+def calendar_events(start: datetime | None = None, end: datetime | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[CalendarEvent]:
+    generate_daily_tasks(life_db, current_user.id, (start or datetime.utcnow()).date())
+    stmt = select(CalendarEvent).where(CalendarEvent.user_id == current_user.id)
+    if start:
+        stmt = stmt.where(CalendarEvent.end_at >= start)
+    if end:
+        stmt = stmt.where(CalendarEvent.start_at <= end)
+    return life_db.scalars(stmt.order_by(CalendarEvent.start_at)).all()
+
+
+@app.post("/calendar-events", response_model=CalendarEventOut, status_code=status.HTTP_201_CREATED)
+def create_calendar_event(payload: CalendarEventCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> CalendarEvent:
+    if payload.end_at <= payload.start_at:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+    event = CalendarEvent(user_id=current_user.id, **payload.model_dump())
+    life_db.add(event)
+    life_db.commit()
+    life_db.refresh(event)
+    return event
+
+
+@app.patch("/calendar-events/{event_id}", response_model=CalendarEventOut)
+def update_calendar_event(event_id: int, payload: CalendarEventUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> CalendarEvent:
+    event = life_db.scalar(select(CalendarEvent).where(CalendarEvent.id == event_id, CalendarEvent.user_id == current_user.id))
+    if not event:
+        raise HTTPException(status_code=404, detail="Calendar event not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(event, field, value)
+    if event.end_at <= event.start_at:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+    life_db.commit()
+    life_db.refresh(event)
+    return event
+
+
+@app.delete("/calendar-events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_calendar_event(event_id: int, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    event = life_db.scalar(select(CalendarEvent).where(CalendarEvent.id == event_id, CalendarEvent.user_id == current_user.id))
+    if not event:
+        raise HTTPException(status_code=404, detail="Calendar event not found")
+    life_db.delete(event)
+    life_db.commit()
+    return None
+
+
+@app.get("/travel-mode", response_model=TravelModeOut)
+def travel_mode(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> TravelModeSettings:
+    return get_travel_settings(life_db, current_user.id)
+
+
+@app.patch("/travel-mode", response_model=TravelModeOut)
+def update_travel_mode(payload: TravelModeUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> TravelModeSettings:
+    settings = get_travel_settings(life_db, current_user.id)
+    settings.enabled = payload.enabled
+    settings.allow_mock_tests = payload.allow_mock_tests
+    settings.daily_minutes = payload.daily_minutes
+    settings.notes = payload.notes
+    life_db.add(settings)
+    life_db.commit()
+    life_db.refresh(settings)
+    generate_daily_tasks(life_db, current_user.id, date.today(), force=True)
+    return settings
 
 
 @app.post("/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
@@ -351,124 +511,124 @@ def export_pdf(current_user: User = Depends(get_current_user), db: Session = Dep
 # --- NEW LIFE OS ROUTES ---
 
 @app.get("/goals", response_model=list[GoalOut])
-def get_goals(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.scalars(select(Goal).where(Goal.user_id == current_user.id).order_by(Goal.target_date)).all()
+def get_goals(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return life_db.scalars(select(Goal).where(Goal.user_id == current_user.id).order_by(Goal.target_date)).all()
 
 @app.post("/goals", response_model=GoalOut, status_code=status.HTTP_201_CREATED)
-def create_goal(payload: GoalCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_goal(payload: GoalCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     goal = Goal(user_id=current_user.id, **payload.model_dump())
-    db.add(goal)
-    db.commit()
-    db.refresh(goal)
+    life_db.add(goal)
+    life_db.commit()
+    life_db.refresh(goal)
     return goal
 
 @app.patch("/goals/{goal_id}", response_model=GoalOut)
-def update_goal(goal_id: int, payload: GoalUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    goal = db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
+def update_goal(goal_id: int, payload: GoalUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    goal = life_db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(goal, field, value)
-    db.commit()
-    db.refresh(goal)
+    life_db.commit()
+    life_db.refresh(goal)
     return goal
 
 @app.delete("/goals/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_goal(goal_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    goal = db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
+def delete_goal(goal_id: int, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    goal = life_db.scalar(select(Goal).where(Goal.id == goal_id, Goal.user_id == current_user.id))
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-    db.delete(goal)
-    db.commit()
+    life_db.delete(goal)
+    life_db.commit()
     return None
 
 @app.get("/milestones", response_model=list[MilestoneOut])
-def get_milestones(goal_id: int | None = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_milestones(goal_id: int | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     stmt = select(Milestone).join(Goal).where(Goal.user_id == current_user.id)
     if goal_id:
         stmt = stmt.where(Milestone.goal_id == goal_id)
-    return db.scalars(stmt.order_by(Milestone.target_date)).all()
+    return life_db.scalars(stmt.order_by(Milestone.target_date)).all()
 
 @app.post("/milestones", response_model=MilestoneOut, status_code=status.HTTP_201_CREATED)
-def create_milestone(payload: MilestoneCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    goal = db.scalar(select(Goal).where(Goal.id == payload.goal_id, Goal.user_id == current_user.id))
+def create_milestone(payload: MilestoneCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    goal = life_db.scalar(select(Goal).where(Goal.id == payload.goal_id, Goal.user_id == current_user.id))
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
     milestone = Milestone(**payload.model_dump())
-    db.add(milestone)
-    db.commit()
-    db.refresh(milestone)
+    life_db.add(milestone)
+    life_db.commit()
+    life_db.refresh(milestone)
     return milestone
 
 @app.patch("/milestones/{milestone_id}", response_model=MilestoneOut)
-def update_milestone(milestone_id: int, payload: MilestoneUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    milestone = db.scalar(select(Milestone).join(Goal).where(Milestone.id == milestone_id, Goal.user_id == current_user.id))
+def update_milestone(milestone_id: int, payload: MilestoneUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    milestone = life_db.scalar(select(Milestone).join(Goal).where(Milestone.id == milestone_id, Goal.user_id == current_user.id))
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(milestone, field, value)
-    db.commit()
-    db.refresh(milestone)
+    life_db.commit()
+    life_db.refresh(milestone)
     return milestone
 
 @app.get("/life-tasks", response_model=list[LifeTaskOut])
-def get_life_tasks(date: date | None = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_life_tasks(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     stmt = select(LifeTask).where(LifeTask.user_id == current_user.id)
     if date:
         stmt = stmt.where(LifeTask.due_date == date)
-    return db.scalars(stmt.order_by(LifeTask.due_date, LifeTask.id)).all()
+    return life_db.scalars(stmt.order_by(LifeTask.due_date, LifeTask.id)).all()
 
 @app.post("/life-tasks", response_model=LifeTaskOut, status_code=status.HTTP_201_CREATED)
-def create_life_task(payload: LifeTaskCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_life_task(payload: LifeTaskCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     task = LifeTask(user_id=current_user.id, **payload.model_dump())
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    life_db.add(task)
+    life_db.commit()
+    life_db.refresh(task)
     return task
 
 @app.patch("/life-tasks/{task_id}", response_model=LifeTaskOut)
-def update_life_task(task_id: int, payload: LifeTaskUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    task = db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
+def update_life_task(task_id: int, payload: LifeTaskUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    task = life_db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, field, value)
-    db.commit()
-    db.refresh(task)
+    life_db.commit()
+    life_db.refresh(task)
     return task
 
 @app.delete("/life-tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_life_task(task_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    task = db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
+def delete_life_task(task_id: int, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    task = life_db.scalar(select(LifeTask).where(LifeTask.id == task_id, LifeTask.user_id == current_user.id))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    db.delete(task)
-    db.commit()
+    life_db.delete(task)
+    life_db.commit()
     return None
 
 @app.get("/habits", response_model=list[HabitOut])
-def get_habits(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.scalars(select(Habit).where(Habit.user_id == current_user.id).order_by(Habit.id)).all()
+def get_habits(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return life_db.scalars(select(Habit).where(Habit.user_id == current_user.id).order_by(Habit.id)).all()
 
 @app.post("/habits", response_model=HabitOut, status_code=status.HTTP_201_CREATED)
-def create_habit(payload: HabitCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_habit(payload: HabitCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     habit = Habit(user_id=current_user.id, **payload.model_dump())
-    db.add(habit)
-    db.commit()
-    db.refresh(habit)
+    life_db.add(habit)
+    life_db.commit()
+    life_db.refresh(habit)
     return habit
 
 @app.post("/habits/{habit_id}/log", status_code=status.HTTP_201_CREATED)
-def log_habit(habit_id: int, payload: HabitLogCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    habit = db.scalar(select(Habit).where(Habit.id == habit_id, Habit.user_id == current_user.id))
+def log_habit(habit_id: int, payload: HabitLogCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    habit = life_db.scalar(select(Habit).where(Habit.id == habit_id, Habit.user_id == current_user.id))
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
     
-    existing = db.scalar(select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == payload.log_date))
+    existing = life_db.scalar(select(HabitLog).where(HabitLog.habit_id == habit_id, HabitLog.log_date == payload.log_date))
     if existing:
         existing.completed = payload.completed
     else:
-        db.add(HabitLog(habit_id=habit_id, log_date=payload.log_date, completed=payload.completed))
+        life_db.add(HabitLog(habit_id=habit_id, log_date=payload.log_date, completed=payload.completed))
     
     # Update streaks naively
     if payload.completed:
@@ -478,40 +638,60 @@ def log_habit(habit_id: int, payload: HabitLogCreate, current_user: User = Depen
     else:
         habit.current_streak = 0
 
-    db.commit()
+    life_db.commit()
     return {"message": "Habit logged"}
 
+
+@app.post("/daily-checkins", response_model=DailyCheckInOut, status_code=status.HTTP_201_CREATED)
+def upsert_daily_checkin(payload: DailyCheckInCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> DailyCheckIn:
+    checkin = life_db.scalar(select(DailyCheckIn).where(DailyCheckIn.user_id == current_user.id, DailyCheckIn.log_date == payload.log_date)) or DailyCheckIn(user_id=current_user.id, log_date=payload.log_date)
+    for field, value in payload.model_dump(exclude={"log_date"}).items():
+        setattr(checkin, field, value)
+    life_db.add(checkin)
+    life_db.commit()
+    life_db.refresh(checkin)
+    return checkin
+
+
+@app.get("/daily-checkins", response_model=list[DailyCheckInOut])
+def get_daily_checkins(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[DailyCheckIn]:
+    return life_db.scalars(select(DailyCheckIn).where(DailyCheckIn.user_id == current_user.id).order_by(DailyCheckIn.log_date.desc())).all()
+
+
+@app.post("/focus-sessions", response_model=FocusSessionOut, status_code=status.HTTP_201_CREATED)
+def create_focus_session(payload: FocusSessionCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> FocusSession:
+    session = FocusSession(user_id=current_user.id, **payload.model_dump())
+    life_db.add(session)
+    update_productivity_log(life_db, current_user.id, payload.start_time.date())
+    life_db.commit()
+    life_db.refresh(session)
+    return session
+
+
+@app.get("/focus-sessions", response_model=list[FocusSessionOut])
+def get_focus_sessions(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[FocusSession]:
+    return life_db.scalars(select(FocusSession).where(FocusSession.user_id == current_user.id).order_by(FocusSession.start_time.desc())).all()
+
 @app.get("/dashboard/live")
-def dashboard_live(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    today = date.today()
-    
-    # Life Tasks
-    tasks = db.scalars(select(LifeTask).where(LifeTask.user_id == current_user.id, LifeTask.due_date == today)).all()
-    completed_tasks = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
-    total_tasks = len(tasks)
-    today_progress = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
-    
-    # Focus Sessions
-    sessions = db.scalars(select(FocusSession).where(FocusSession.user_id == current_user.id)).all()
-    today_focus = sum(s.duration_minutes for s in sessions if s.start_time.date() == today)
-    
-    # Habits
-    habits = db.scalars(select(Habit).where(Habit.user_id == current_user.id)).all()
-    habit_logs = db.scalars(select(HabitLog).join(Habit).where(Habit.user_id == current_user.id, HabitLog.log_date == today, HabitLog.completed.is_(True))).all()
-    habit_completion_rate = (len(habit_logs) / len(habits) * 100) if habits else 0
+def dashboard_live(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return build_live_dashboard(life_db, current_user.id)
 
-    # Weekly Progress
-    week_start = today - timedelta(days=today.weekday())
-    weekly_tasks = db.scalars(select(LifeTask).where(LifeTask.user_id == current_user.id, LifeTask.due_date >= week_start, LifeTask.due_date <= today)).all()
-    weekly_completed = sum(1 for t in weekly_tasks if t.status == TaskStatus.COMPLETED)
-    weekly_total = len(weekly_tasks)
-    weekly_progress = (weekly_completed / weekly_total * 100) if weekly_total > 0 else 0
 
-    return {
-        "today_progress": round(today_progress, 1),
-        "weekly_progress": round(weekly_progress, 1),
-        "streak_count": sum(h.current_streak for h in habits),
-        "productivity_score": round((today_progress + habit_completion_rate) / 2, 1),
-        "focus_minutes": today_focus,
-        "habit_completion_rate": round(habit_completion_rate, 1)
-    }
+@app.get("/weekly-review/live")
+def weekly_review_live(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_life_os_weekly_review(life_db, current_user.id, date)
+
+
+@app.get("/notifications/live")
+def notifications_live(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return build_life_os_notifications(life_db, current_user.id)
+
+
+@app.get("/analytics/live")
+def analytics_live(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_life_os_analytics(life_db, current_user.id)
+
+
+@app.get("/settings/life-os")
+def life_os_settings(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_life_os_settings(life_db, current_user.id)

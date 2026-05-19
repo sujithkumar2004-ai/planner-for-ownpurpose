@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { Check, Loader2, TriangleAlert, TrendingUp, Calendar, AlertCircle, GraduationCap, ListChecks, Flame, Clock, Target } from "lucide-react";
 import { motion } from "framer-motion";
 
-import { apiFetch, type Dashboard, type LiveDashboard, type LifeTask } from "@/lib/api";
-import { dashboard as seedDashboard } from "@/lib/seed-data";
+import { apiFetch, type Dashboard, type LiveDashboard } from "@/lib/api";
 import { levelClass } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,22 +26,23 @@ const itemVars = {
 };
 
 export function DashboardWidgets() {
-  const [data, setData] = useState<Dashboard>(seedDashboard);
+  const [data, setData] = useState<Dashboard | null>(null);
   const [liveData, setLiveData] = useState<LiveDashboard | null>(null);
-  const [tasks, setTasks] = useState<LifeTask[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [dashRes, liveRes, tasksRes] = await Promise.all([
-          apiFetch<Dashboard>("/dashboard").catch(() => seedDashboard),
-          apiFetch<LiveDashboard>("/dashboard/live").catch(() => null),
-          apiFetch<LifeTask[]>(`/life-tasks?date=${new Date().toISOString().split("T")[0]}`).catch(() => [])
+        const [dashRes, liveRes] = await Promise.all([
+          apiFetch<Dashboard>("/dashboard"),
+          apiFetch<LiveDashboard>("/dashboard/live")
         ]);
         setData(dashRes);
         setLiveData(liveRes);
-        setTasks(tasksRes);
+        setLoadError(null);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : "Dashboard failed to load");
       } finally {
         setLoading(false);
       }
@@ -51,6 +51,15 @@ export function DashboardWidgets() {
   }, []);
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const tasks = liveData?.today_tasks ?? [];
+
+  if (loadError) {
+    return <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-200">Dashboard API error: {loadError}</div>;
+  }
+
+  if (!data || !liveData) {
+    return <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-purple-500" /></div>;
+  }
 
   return (
     <div className="grid gap-8 p-2 max-w-7xl mx-auto">
@@ -81,10 +90,10 @@ export function DashboardWidgets() {
             <CardContent className="space-y-4 relative z-10">
               <div className="flex items-baseline gap-2">
                 <span className="text-5xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-white via-blue-100 to-blue-400">
-                  {liveData ? liveData.productivity_score : data.daily_completion}%
+                  {liveData.productivity_score}%
                 </span>
               </div>
-              <ProgressBar value={liveData ? liveData.productivity_score : data.daily_completion} className="h-2 bg-black/50" />
+              <ProgressBar value={liveData.productivity_score} className="h-2 bg-black/50" />
             </CardContent>
           </Card>
         </motion.div>
@@ -101,7 +110,7 @@ export function DashboardWidgets() {
                 <Flame className="h-8 w-8 text-orange-400" />
               </div>
               <div>
-                <p className="text-5xl font-extrabold tracking-tighter text-white">{liveData?.streak_count ?? 0}</p>
+                <p className="text-5xl font-extrabold tracking-tighter text-white">{liveData.current_streak}</p>
                 <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider mt-1">Days</p>
               </div>
             </CardContent>
@@ -120,7 +129,7 @@ export function DashboardWidgets() {
                 <Clock className="h-8 w-8 text-emerald-400" />
               </div>
               <div>
-                <p className="text-5xl font-extrabold tracking-tighter text-white">{liveData?.focus_minutes ?? 0}</p>
+                <p className="text-5xl font-extrabold tracking-tighter text-white">{liveData.focus_minutes_today}</p>
                 <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider mt-1">Today</p>
               </div>
             </CardContent>
@@ -137,10 +146,10 @@ export function DashboardWidgets() {
             <CardContent className="space-y-4 relative z-10">
               <div className="flex items-baseline gap-2">
                 <span className="text-5xl font-extrabold tracking-tighter text-white">
-                  {liveData?.weekly_progress ?? 0}%
+                  {liveData.syllabus_completion}%
                 </span>
               </div>
-              <ProgressBar value={liveData?.weekly_progress ?? 0} className="h-2 bg-black/50" />
+              <ProgressBar value={liveData.syllabus_completion} className="h-2 bg-black/50" />
             </CardContent>
           </Card>
         </motion.div>
@@ -161,22 +170,16 @@ export function DashboardWidgets() {
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-6 pt-6">
-              {data.roadmap.slice(0, 2).map((item, i) => (
-                <div key={i} className="flex justify-between items-center bg-white/5 p-3 rounded-lg border border-white/5">
-                  <span className="text-sm font-medium text-white">{item.name}</span>
-                  <span className="text-xs text-purple-400 uppercase tracking-widest">{item.status}</span>
-                </div>
-              ))}
-              {data.exams.map((exam) => (
-                <div key={exam.id} className="grid gap-3 group">
+              {liveData.exam_readiness.map((exam) => (
+                <div key={exam.exam_id} className="grid gap-3 group">
                   <div className="flex items-center justify-between gap-3 text-sm">
                     <span className="font-semibold text-zinc-200 group-hover:text-purple-400 transition-colors">{exam.name}</span>
                     <span className="text-zinc-300 bg-white/5 px-3 py-1 rounded-full text-xs font-medium border border-white/10 shadow-sm">{exam.days_left} days left</span>
                   </div>
-                  <ProgressBar value={exam.progress} className="h-2 bg-black/50" />
+                  <ProgressBar value={exam.readiness_score} className="h-2 bg-black/50" />
                 </div>
               ))}
-              {data.exams.length === 0 && data.roadmap.length === 0 && (
+              {liveData.exam_readiness.length === 0 && (
                 <div className="text-center py-10 text-zinc-500 flex flex-col items-center">
                   <Calendar className="h-10 w-10 mb-3 opacity-30" />
                   <p>No active roadmap items</p>
@@ -203,7 +206,7 @@ export function DashboardWidgets() {
                     </p>
                     <p className="text-xs text-zinc-500 font-medium mt-1.5 flex items-center gap-2">
                       <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)] ${task.status === "active" ? "bg-purple-500" : "bg-blue-500"}`} />
-                      {task.status.toUpperCase()}
+                      {task.status.toUpperCase()} · {task.task_type}
                     </p>
                   </div>
                   <div className="flex items-center justify-center relative">

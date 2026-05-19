@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import DisciplineStatus, TaskCategory, WarningLevel, GoalStatus, TaskStatus
+from app.models import DisciplineStatus, ExamDateStatus, GoalStatus, StudyTaskType, TaskCategory, TaskStatus, WarningLevel
 
 
 class Token(BaseModel):
@@ -308,3 +308,127 @@ class FocusSessionOut(BaseModel):
     duration_minutes: int
 
     model_config = {"from_attributes": True}
+
+
+class ExamDateOut(BaseModel):
+    id: int
+    exam_date: date
+    label: str
+    source_url: str | None
+    source_name: str | None
+    status: ExamDateStatus
+    manually_overridden: bool
+    refreshed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class SyllabusTopicOut(BaseModel):
+    id: int
+    name: str
+    difficulty: int
+    estimated_hours: float
+    progress_percent: float
+    weak_score: float
+    source_ref: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class SyllabusSubjectOut(BaseModel):
+    id: int
+    name: str
+    weight: float
+    topics: list[SyllabusTopicOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+class BackendExamOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    description: str | None
+    active: bool
+    dates: list[ExamDateOut] = []
+    subjects: list[SyllabusSubjectOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+class ExamDateOverride(BaseModel):
+    exam_date: date
+    label: str = "Main exam"
+    source_name: str | None = "Manual override"
+
+
+class StudyPlanCreate(BaseModel):
+    exam_id: int
+    active: bool = True
+    available_hours_per_day: float = Field(default=4.0, ge=0.5, le=12)
+
+
+class GeneratedTaskOut(BaseModel):
+    id: int
+    exam_id: int | None
+    exam_name: str | None = None
+    topic_id: int | None
+    topic_name: str | None = None
+    task_date: date
+    title: str
+    task_type: str
+    status: str
+    estimated_minutes: int
+    priority: int
+    generated_reason: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class GeneratedTaskUpdate(BaseModel):
+    status: TaskStatus
+
+
+class CalendarEventCreate(BaseModel):
+    title: str
+    description: str | None = None
+    start_at: datetime
+    end_at: datetime
+    event_type: str = "manual"
+
+
+class CalendarEventUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    completed: bool | None = None
+
+
+class CalendarEventOut(BaseModel):
+    id: int
+    generated_task_id: int | None
+    title: str
+    description: str | None
+    start_at: datetime
+    end_at: datetime
+    event_type: str
+    completed: bool
+
+    model_config = {"from_attributes": True}
+
+
+class TravelModeOut(BaseModel):
+    enabled: bool
+    allow_mock_tests: bool
+    daily_minutes: int
+    notes: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class TravelModeUpdate(BaseModel):
+    enabled: bool
+    allow_mock_tests: bool = False
+    daily_minutes: int = Field(default=90, ge=15, le=360)
+    notes: str | None = None

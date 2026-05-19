@@ -3,6 +3,8 @@ from datetime import date
 from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.email import send_daily_missed_task_email, send_weekly_summary_email
+from app.life_os import refresh_exam_dates
+from app.life_os_database import LifeOSSessionLocal
 from app.services import users_for_alerts
 
 
@@ -31,3 +33,12 @@ def send_weekly_summary_emails() -> dict:
     finally:
         db.close()
 
+
+@celery_app.task(name="app.tasks.refresh_exam_dates")
+def refresh_exam_dates_task() -> dict:
+    db = LifeOSSessionLocal()
+    try:
+        refreshed = refresh_exam_dates(db)
+        return {"refreshed": len(refreshed)}
+    finally:
+        db.close()

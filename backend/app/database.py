@@ -10,11 +10,9 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(
-    get_settings().sqlalchemy_database_url,
-    pool_pre_ping=True,
-    connect_args={"prepare_threshold": None},
-)
+database_url = get_settings().sqlalchemy_database_url
+connect_args = {"prepare_threshold": None} if database_url.startswith("postgresql") else {}
+engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 

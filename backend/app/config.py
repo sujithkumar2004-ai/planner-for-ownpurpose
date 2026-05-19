@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://finalplanner:finalplanner@localhost:5432/finalplanner"
     direct_url: str = ""
+    life_os_database_url: str = "mysql+pymysql://finalplanner:finalplanner@localhost:3306/finalplanner_life_os?charset=utf8mb4"
+    life_os_direct_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
@@ -37,6 +39,14 @@ class Settings(BaseSettings):
     @property
     def migration_database_url(self) -> str:
         return normalize_sqlalchemy_url(self.direct_url or self.database_url)
+
+    @property
+    def life_os_sqlalchemy_database_url(self) -> str:
+        return normalize_sqlalchemy_url(self.life_os_database_url)
+
+    @property
+    def life_os_migration_database_url(self) -> str:
+        return normalize_sqlalchemy_url(self.life_os_direct_url or self.life_os_database_url)
 
 
 @lru_cache

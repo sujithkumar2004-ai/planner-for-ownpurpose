@@ -99,10 +99,93 @@ export type Habit = {
 };
 
 export type LiveDashboard = {
-  today_progress: number;
-  weekly_progress: number;
-  streak_count: number;
+  today_tasks: GeneratedTask[];
+  completed_count: number;
+  pending_count: number;
+  overdue_count: number;
+  active_task: GeneratedTask | null;
+  current_streak: number;
+  exam_readiness: Array<{ exam_id: number; name: string; exam_date: string; days_left: number; syllabus_completion: number; readiness_score: number }>;
+  syllabus_completion: number;
+  focus_minutes_today: number;
+  focus_minutes_week: number;
+  calendar_events_today: CalendarEvent[];
+  next_exam_countdown: { name: string; exam_date: string; days_left: number } | null;
+  weak_topics: Array<{ exam: string; topic: string; progress: number; weak_score: number }>;
+  recommended_next_action: string;
   productivity_score: number;
-  focus_minutes: number;
   habit_completion_rate: number;
+  travel_mode: boolean;
+};
+
+export type GeneratedTask = {
+  id: number;
+  exam_id: number | null;
+  exam_name?: string | null;
+  topic_id: number | null;
+  topic_name?: string | null;
+  task_date: string;
+  title: string;
+  task_type: string;
+  status: TaskStatus;
+  estimated_minutes: number;
+  priority: number;
+  generated_reason?: string | null;
+};
+
+export type CalendarEvent = {
+  id: number;
+  generated_task_id: number | null;
+  title: string;
+  description: string | null;
+  start_at: string;
+  end_at: string;
+  event_type: string;
+  completed: boolean;
+};
+
+export type ExamCatalog = {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  dates: Array<{ id: number; exam_date: string; label: string; source_url: string | null; source_name: string | null; status: string; manually_overridden: boolean; refreshed_at: string | null }>;
+  subjects: Array<{ id: number; name: string; weight: number; topics: Array<{ id: number; name: string; difficulty: number; estimated_hours: number; progress_percent: number; weak_score: number; source_ref: string | null }> }>;
+};
+
+export type TravelMode = {
+  enabled: boolean;
+  allow_mock_tests: boolean;
+  daily_minutes: number;
+  notes: string | null;
+};
+
+export type LifeAnalytics = {
+  study_hours_graph: Array<{ date: string; hours: number }>;
+  completion_trend: Array<{ date: string; completion: number }>;
+  streak_graph: Array<{ date: string; streak: number }>;
+  topic_progress_heatmap: Array<{ exam: string; topic: string; progress: number; weak_score: number }>;
+  exam_readiness: Array<{ exam_id: number; name: string; exam_date: string; days_left: number; syllabus_completion: number; readiness_score: number }>;
+  productivity_trend: Array<{ date: string; score: number }>;
+};
+
+export type LifeNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  level: "GREEN" | "YELLOW" | "ORANGE" | "RED";
+  created_at: string;
+};
+
+export type LifeSettings = {
+  selected_exams: Array<{ exam_id: number; exam_name: string; active: boolean; available_hours_per_day: number }>;
+  travel_mode: TravelMode;
+  notification_preferences: {
+    daily_task_reminders: boolean;
+    overdue_alerts: boolean;
+    exam_countdown_alerts: boolean;
+    weekly_review_email: boolean;
+  };
 };

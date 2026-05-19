@@ -53,6 +53,23 @@ class TaskStatus(str, Enum):
     OVERDUE = "overdue"
 
 
+class StudyTaskType(str, Enum):
+    CONCEPT = "concept"
+    PRACTICE = "practice"
+    REVISION = "revision"
+    MOCK = "mock"
+    PYQ = "PYQ"
+    FORMULA_REVIEW = "formula_review"
+    READING = "reading"
+    ANALYSIS = "analysis"
+
+
+class ExamDateStatus(str, Enum):
+    OFFICIAL = "official"
+    TENTATIVE = "tentative"
+    MANUAL_OVERRIDE = "manual_override"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -67,7 +84,7 @@ class DailyTask(Base):
     __tablename__ = "daily_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     task_date: Mapped[date] = mapped_column(Date, index=True)
     title: Mapped[str] = mapped_column(String(200))
     category: Mapped[TaskCategory] = mapped_column(SAEnum(TaskCategory))
@@ -85,7 +102,7 @@ class TaskLog(Base):
     __tablename__ = "task_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     task_id: Mapped[int] = mapped_column(ForeignKey("daily_tasks.id", ondelete="CASCADE"))
     completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -95,7 +112,7 @@ class ExamTrack(Base):
     __tablename__ = "exam_tracks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     name: Mapped[str] = mapped_column(String(120))
     exam_date: Mapped[date]
     target_score: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -108,7 +125,7 @@ class ExamTopic(Base):
     __tablename__ = "exam_topics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     exam_id: Mapped[int] = mapped_column(ForeignKey("exam_tracks.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(160))
     planned_units: Mapped[int] = mapped_column(Integer, default=10)
@@ -121,7 +138,7 @@ class MockTest(Base):
     __tablename__ = "mock_tests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     exam_id: Mapped[int] = mapped_column(ForeignKey("exam_tracks.id", ondelete="CASCADE"))
     taken_on: Mapped[date]
     score: Mapped[float]
@@ -132,7 +149,7 @@ class StudySession(Base):
     __tablename__ = "study_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     topic: Mapped[str] = mapped_column(String(180))
     category: Mapped[str] = mapped_column(String(80))
     session_date: Mapped[date]
@@ -144,7 +161,7 @@ class GymRoutine(Base):
     __tablename__ = "gym_routines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     weekday: Mapped[int] = mapped_column(Integer)
     day_name: Mapped[str] = mapped_column(String(20))
     focus: Mapped[str] = mapped_column(String(160))
@@ -155,7 +172,7 @@ class GymLog(Base):
     __tablename__ = "gym_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     log_date: Mapped[date]
     exercise_name: Mapped[str] = mapped_column(String(160))
     sets: Mapped[int] = mapped_column(Integer, default=0)
@@ -170,7 +187,7 @@ class TravelBreak(Base):
     __tablename__ = "travel_breaks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     start_date: Mapped[date]
     end_date: Mapped[date]
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -181,7 +198,7 @@ class WarningRule(Base):
     __tablename__ = "warning_rules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     code: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(Text)
     level: Mapped[WarningLevel] = mapped_column(SAEnum(WarningLevel))
@@ -324,7 +341,7 @@ class UserSettings(Base):
     __tablename__ = "settings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     email_alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_email_time: Mapped[str] = mapped_column(String(10), default="23:30")
     weekly_email_time: Mapped[str] = mapped_column(String(10), default="21:00")
@@ -339,7 +356,7 @@ class Goal(Base):
     __tablename__ = "goals"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -369,7 +386,7 @@ class LifeTask(Base):
     __tablename__ = "life_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id", ondelete="SET NULL"), nullable=True, index=True)
     milestone_id: Mapped[int | None] = mapped_column(ForeignKey("milestones.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
@@ -387,7 +404,7 @@ class Habit(Base):
     __tablename__ = "habits"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     title: Mapped[str] = mapped_column(String(200))
     frequency: Mapped[str] = mapped_column(String(50), default="daily")
     current_streak: Mapped[int] = mapped_column(Integer, default=0)
@@ -410,7 +427,7 @@ class DailyCheckIn(Base):
     __tablename__ = "daily_checkins"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     log_date: Mapped[date] = mapped_column(Date, index=True)
     mood_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     focus_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -424,8 +441,153 @@ class FocusSession(Base):
     __tablename__ = "focus_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
     task_id: Mapped[int | None] = mapped_column(ForeignKey("life_tasks.id", ondelete="SET NULL"), nullable=True)
     start_time: Mapped[datetime] = mapped_column(DateTime)
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Exam(Base):
+    __tablename__ = "exams"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    dates: Mapped[list["ExamDate"]] = relationship(back_populates="exam", cascade="all, delete-orphan")
+    subjects: Mapped[list["SyllabusSubject"]] = relationship(back_populates="exam", cascade="all, delete-orphan")
+
+
+class ExamDate(Base):
+    __tablename__ = "exam_dates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    exam_date: Mapped[date] = mapped_column(Date, index=True)
+    label: Mapped[str] = mapped_column(String(120), default="Main exam")
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[ExamDateStatus] = mapped_column(SAEnum(ExamDateStatus), default=ExamDateStatus.TENTATIVE)
+    manually_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    exam: Mapped[Exam] = relationship(back_populates="dates")
+
+    __table_args__ = (UniqueConstraint("exam_id", "label", name="uq_exam_date_label"),)
+
+
+class SyllabusSubject(Base):
+    __tablename__ = "syllabus_subjects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+
+    exam: Mapped[Exam] = relationship(back_populates="subjects")
+    topics: Mapped[list["SyllabusTopic"]] = relationship(back_populates="subject", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint("exam_id", "name", name="uq_exam_subject_name"),)
+
+
+class SyllabusTopic(Base):
+    __tablename__ = "syllabus_topics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("syllabus_subjects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(220))
+    difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    estimated_hours: Mapped[float] = mapped_column(Float, default=4.0)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    weak_score: Mapped[float] = mapped_column(Float, default=0.0)
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+
+    subject: Mapped[SyllabusSubject] = relationship(back_populates="topics")
+
+    __table_args__ = (UniqueConstraint("subject_id", "name", name="uq_subject_topic_name"),)
+
+
+class StudyPlan(Base):
+    __tablename__ = "study_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    available_hours_per_day: Mapped[float] = mapped_column(Float, default=4.0)
+    revision_intensity: Mapped[float] = mapped_column(Float, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("user_id", "exam_id", name="uq_user_exam_study_plan"),)
+
+
+class GeneratedDailyTask(Base):
+    __tablename__ = "generated_daily_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    exam_id: Mapped[int | None] = mapped_column(ForeignKey("exams.id", ondelete="SET NULL"), nullable=True, index=True)
+    topic_id: Mapped[int | None] = mapped_column(ForeignKey("syllabus_topics.id", ondelete="SET NULL"), nullable=True, index=True)
+    task_date: Mapped[date] = mapped_column(Date, index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    task_type: Mapped[StudyTaskType] = mapped_column(SAEnum(StudyTaskType))
+    status: Mapped[TaskStatus] = mapped_column(SAEnum(TaskStatus), default=TaskStatus.PENDING)
+    estimated_minutes: Mapped[int] = mapped_column(Integer, default=45)
+    priority: Mapped[int] = mapped_column(Integer, default=3)
+    generated_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    carried_from_task_id: Mapped[int | None] = mapped_column(ForeignKey("generated_daily_tasks.id", ondelete="SET NULL"), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("user_id", "task_date", "title", "task_type", name="uq_user_generated_task"),)
+
+
+class CalendarEvent(Base):
+    __tablename__ = "calendar_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    generated_task_id: Mapped[int | None] = mapped_column(ForeignKey("generated_daily_tasks.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(220))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    event_type: Mapped[str] = mapped_column(String(50), default="manual")
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TravelModeSettings(Base):
+    __tablename__ = "travel_mode_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_mock_tests: Mapped[bool] = mapped_column(Boolean, default=False)
+    daily_minutes: Mapped[int] = mapped_column(Integer, default=90)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProductivityLog(Base):
+    __tablename__ = "productivity_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    log_date: Mapped[date] = mapped_column(Date, index=True)
+    completed_tasks: Mapped[int] = mapped_column(Integer, default=0)
+    pending_tasks: Mapped[int] = mapped_column(Integer, default=0)
+    overdue_tasks: Mapped[int] = mapped_column(Integer, default=0)
+    focus_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    productivity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("user_id", "log_date", name="uq_user_productivity_date"),)

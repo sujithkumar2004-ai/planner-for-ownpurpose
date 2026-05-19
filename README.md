@@ -6,6 +6,7 @@ Private production-grade discipline enforcement platform for exam preparation, b
 
 - Frontend: Next.js 14 App Router, TypeScript, TailwindCSS, shadcn-style UI primitives, Zustand, React Query, Framer Motion, PWA support
 - Backend: FastAPI, SQLAlchemy, PostgreSQL, Alembic, Celery, Redis
+- Life OS data store: MySQL via `mysql+pymysql` for exams, syllabus, generated daily tasks, calendar events, travel mode, and productivity logs
 - Auth: JWT
 - Email: Resend
 - Monitoring: Sentry and structured logging hooks
@@ -147,10 +148,12 @@ Backend:
 4. Add a third Railway service for Celery beat and set its Railway config to `infra/railway-beat.json`.
 5. Set `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, and `SENTRY_DSN`.
 6. Use Supabase PostgreSQL and Upstash Redis.
-7. Railway auto-deploys on GitHub push.
-8. Health check path is `/health`.
-9. The web service runs `alembic upgrade head` before Gunicorn/Uvicorn.
-10. Optional production seed is controlled by `RUN_PRODUCTION_SEED`, `PRODUCTION_SEED_EMAIL`, and `PRODUCTION_SEED_PASSWORD`.
+7. Set `LIFE_OS_DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/DB?charset=utf8mb4` for the backend, worker, and beat services.
+8. Run Life OS MySQL migrations with `alembic -c life_os_alembic.ini upgrade head`.
+9. Railway auto-deploys on GitHub push.
+10. Health check path is `/health`.
+11. The web service runs legacy `alembic upgrade head` before Gunicorn/Uvicorn; add `alembic -c life_os_alembic.ini upgrade head` when `LIFE_OS_DATABASE_URL` is configured.
+12. Optional production seed is controlled by `RUN_PRODUCTION_SEED`, `PRODUCTION_SEED_EMAIL`, and `PRODUCTION_SEED_PASSWORD`.
 
 CI/CD:
 
