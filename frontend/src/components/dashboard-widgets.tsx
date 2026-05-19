@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, TriangleAlert, TrendingUp, Calendar, AlertCircle, GraduationCap, ListChecks, Flame, Clock, Target } from "lucide-react";
+import { Check, Loader2, TrendingUp, Calendar, AlertCircle, GraduationCap, ListChecks, Flame, Clock, Target } from "lucide-react";
 import { motion } from "framer-motion";
 
-import { apiFetch, type Dashboard, type LiveDashboard } from "@/lib/api";
-import { levelClass } from "@/lib/utils";
+import { apiFetch, type LifeNotification, type LiveDashboard } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/progress-ring";
@@ -26,20 +25,20 @@ const itemVars = {
 };
 
 export function DashboardWidgets() {
-  const [data, setData] = useState<Dashboard | null>(null);
   const [liveData, setLiveData] = useState<LiveDashboard | null>(null);
+  const [notifications, setNotifications] = useState<LifeNotification[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [dashRes, liveRes] = await Promise.all([
-          apiFetch<Dashboard>("/dashboard"),
-          apiFetch<LiveDashboard>("/dashboard/live")
+        const [liveRes, notificationRes] = await Promise.all([
+          apiFetch<LiveDashboard>("/dashboard/live"),
+          apiFetch<LifeNotification[]>("/notifications/live")
         ]);
-        setData(dashRes);
         setLiveData(liveRes);
+        setNotifications(notificationRes);
         setLoadError(null);
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : "Dashboard failed to load");
@@ -57,7 +56,7 @@ export function DashboardWidgets() {
     return <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-200">Dashboard API error: {loadError}</div>;
   }
 
-  if (!data || !liveData) {
+  if (!liveData) {
     return <div className="flex justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-purple-500" /></div>;
   }
 
@@ -66,7 +65,7 @@ export function DashboardWidgets() {
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-6">
         <div>
           <p className="text-sm font-medium text-purple-400 mb-1 uppercase tracking-widest">{today}</p>
-          <h1 className="text-4xl font-bold tracking-tight text-white drop-shadow-sm">Welcome back, {data.name.split(' ')[0]}</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-white drop-shadow-sm">Welcome back</h1>
         </div>
         <Button className="glass border border-white/10 text-zinc-300 hover:text-white transition-all shadow-sm group hover:border-purple-500/50">
           {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2 text-green-400 group-hover:scale-110 transition-transform" />} 
@@ -231,7 +230,7 @@ export function DashboardWidgets() {
         </motion.div>
       </motion.section>
 
-      {data.warnings.length > 0 && (
+      {notifications.length > 0 && (
         <motion.div variants={containerVars} initial="hidden" animate="show">
           <Card className="glass-card border-orange-500/20 shadow-lg shadow-orange-500/5 relative overflow-hidden">
             <div className="absolute inset-0 bg-orange-500/5 pointer-events-none" />
@@ -242,14 +241,14 @@ export function DashboardWidgets() {
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2 pt-6 relative z-10">
-              {data.warnings.map((warning) => (
+              {notifications.map((warning) => (
                 <div key={warning.id} className="rounded-xl border border-white/5 bg-black/40 backdrop-blur-md p-5 flex gap-4 hover:border-orange-500/30 transition-colors shadow-sm">
-                  <div className={`mt-0.5 p-2 rounded-xl shrink-0 ${levelClass(warning.level)} bg-opacity-10 border border-current shadow-sm`}>
-                    <TriangleAlert className="h-5 w-5" />
+                  <div className="mt-0.5 p-2 rounded-xl shrink-0 text-orange-400 bg-orange-500/10 border border-current shadow-sm">
+                    <AlertCircle className="h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase tracking-widest mb-1.5" style={{ color: "var(--warning-color)" }}>{warning.level} ALERT</p>
-                    <p className="text-sm text-zinc-300 font-medium leading-relaxed">{warning.message}</p>
+                    <p className="text-sm text-zinc-300 font-medium leading-relaxed">{warning.body}</p>
                   </div>
                 </div>
               ))}

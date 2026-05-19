@@ -16,8 +16,12 @@ from app.models import (
     ExamDateStatus,
     FocusSession,
     GeneratedDailyTask,
+    Goal,
+    GoalStatus,
     Habit,
     HabitLog,
+    LifeTask,
+    Milestone,
     ProductivityLog,
     StudyPlan,
     StudyTaskType,
@@ -578,6 +582,77 @@ def build_life_os_settings(db: Session, user_id: int) -> dict:
             "exam_countdown_alerts": True,
             "weekly_review_email": True,
         },
+    }
+
+
+def build_monitoring_overview(db: Session, user_id: int) -> dict:
+    today = date.today()
+    dashboard = build_live_dashboard(db, user_id)
+    goals = db.scalars(select(Goal).where(Goal.user_id == user_id)).all()
+    milestones = db.scalars(select(Milestone).join(Goal).where(Goal.user_id == user_id)).all()
+    life_tasks = db.scalars(select(LifeTask).where(LifeTask.user_id == user_id)).all()
+    overdue_life_tasks = [task for task in life_tasks if task.due_date and task.due_date < today and task.status != TaskStatus.COMPLETED]
+    upcoming_deadlines = [
+        {
+            "id": task.id,
+            "title": task.title,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+            "status": task.status.value,
+        }
+        for task in sorted([task for task in life_tasks if task.due_date and task.status != TaskStatus.COMPLETED], key=lambda item: item.due_date)[:6]
+    ]
+    active_goals = [goal for goal in goals if goal.status == GoalStatus.ACTIVE]
+    completed_milestones = [milestone for milestone in milestones if milestone.completed]
+    return {
+        "today_completed_tasks": dashboard["completed_count"],
+        "today_pending_tasks": dashboard["pending_count"],
+        "missed_tasks": dashboard["overdue_count"] + len(overdue_life_tasks),
+        "habit_completion": dashboard["habit_completion_rate"],
+        "study_hours": round(dashboard["focus_minutes_today"] / 60, 2),
+        "focus_minutes": dashboard["focus_minutes_today"],
+        "productivity_score": dashboard["productivity_score"],
+        "streak": dashboard["current_streak"],
+        "weekly_trend": build_life_os_analytics(db, user_id)["completion_trend"],
+        "upcoming_deadlines": upcoming_deadlines,
+        "exam_countdown": dashboard["next_exam_countdown"],
+        "active_goals": len(active_goals),
+        "goal_progress": round(len(completed_milestones) / max(len(milestones), 1) * 100, 1) if milestones else 0,
+        "recommended_next_action": dashboard["recommended_next_action"],
+    }
+
+
+def build_monitoring_daily(db: Session, user_id: int, target_date: date | None = None) -> dict:
+    target_date = target_date or date.today()
+    tasks = generate_daily_tasks(db, user_id, target_date)
+    update_productivity_log(db, user_id, target_date)
+    db.commit()
+    log = db.scalar(select(ProductivityLog).where(ProductivityLog.user_id == user_id, ProductivityLog.log_date == target_date))
+    habits = db.scalars(select(Habit).where(Habit.user_id == user_id)).all()
+    completed_habits = db.scalars(select(HabitLog).join(Habit).where(Habit.user_id == user_id, HabitLog.log_date == target_date, HabitLog.completed.is_(True))).all()
+    return {
+        "date": target_date.isoformat(),
+        "tasks": [_task_payload(db, task) for task in tasks],
+        "completed_tasks": sum(1 for task in tasks if task.status == TaskStatus.COMPLETED),
+        "pending_tasks": sum(1 for task in tasks if task.status in {TaskStatus.PENDING, TaskStatus.ACTIVE}),
+        "overdue_tasks": log.overdue_tasks if log else 0,
+        "habit_completion": round(len(completed_habits) / max(len(habits), 1) * 100, 1) if habits else 0,
+        "focus_minutes": log.focus_minutes if log else 0,
+        "productivity_score": log.productivity_score if log else 0,
+    }
+
+
+def build_monitoring_weekly(db: Session, user_id: int, week_end: date | None = None) -> dict:
+    week_end = week_end or date.today()
+    week_start = week_end - timedelta(days=6)
+    days = [build_monitoring_daily(db, user_id, week_start + timedelta(days=offset)) for offset in range(7)]
+    return {
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "days": days,
+        "completed_tasks": sum(day["completed_tasks"] for day in days),
+        "pending_tasks": sum(day["pending_tasks"] for day in days),
+        "focus_minutes": sum(day["focus_minutes"] for day in days),
+        "average_productivity_score": round(sum(day["productivity_score"] for day in days) / max(len(days), 1), 1),
     }
 
 

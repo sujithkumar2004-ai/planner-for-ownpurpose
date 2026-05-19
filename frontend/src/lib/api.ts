@@ -189,3 +189,59 @@ export type LifeSettings = {
     weekly_review_email: boolean;
   };
 };
+
+export type MonitoringOverview = {
+  today_completed_tasks: number;
+  today_pending_tasks: number;
+  missed_tasks: number;
+  habit_completion: number;
+  study_hours: number;
+  focus_minutes: number;
+  productivity_score: number;
+  streak: number;
+  weekly_trend: Array<{ date: string; completion: number }>;
+  upcoming_deadlines: Array<{ id: number; title: string; due_date: string | null; status: string }>;
+  exam_countdown: { name: string; exam_date: string; days_left: number } | null;
+  active_goals: number;
+  goal_progress: number;
+  recommended_next_action: string;
+};
+
+export type MonitoringDaily = {
+  date: string;
+  tasks: GeneratedTask[];
+  completed_tasks: number;
+  pending_tasks: number;
+  overdue_tasks: number;
+  habit_completion: number;
+  focus_minutes: number;
+  productivity_score: number;
+};
+
+export type MonitoringWeekly = {
+  week_start: string;
+  week_end: string;
+  days: MonitoringDaily[];
+  completed_tasks: number;
+  pending_tasks: number;
+  focus_minutes: number;
+  average_productivity_score: number;
+};
+
+export type SleepLog = {
+  id: number;
+  sleep_date: string;
+  sleep_start: string | null;
+  sleep_end: string | null;
+  hours: number;
+  quality: number;
+  notes: string | null;
+};
+
+export type DistractionLog = {
+  id: number;
+  log_date: string;
+  source: string;
+  minutes: number;
+  notes: string | null;
+};

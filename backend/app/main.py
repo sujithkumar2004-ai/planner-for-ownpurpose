@@ -17,6 +17,9 @@ from app.life_os import (
     build_life_os_settings,
     build_life_os_weekly_review,
     build_live_dashboard,
+    build_monitoring_daily,
+    build_monitoring_overview,
+    build_monitoring_weekly,
     complete_generated_task,
     ensure_exam_catalog,
     generate_daily_tasks,
@@ -423,6 +426,24 @@ def create_sleep_log(payload: SleepLogCreate, current_user: User = Depends(get_c
     return {"id": log.id}
 
 
+@app.get("/sleep/logs")
+@app.get("/api/sleep/logs")
+def sleep_logs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
+    logs = db.scalars(select(SleepLog).where(SleepLog.user_id == current_user.id).order_by(SleepLog.sleep_date.desc())).all()
+    return [
+        {
+            "id": log.id,
+            "sleep_date": log.sleep_date.isoformat(),
+            "sleep_start": log.sleep_start.isoformat() if log.sleep_start else None,
+            "sleep_end": log.sleep_end.isoformat() if log.sleep_end else None,
+            "hours": log.hours,
+            "quality": log.quality,
+            "notes": log.notes,
+        }
+        for log in logs
+    ]
+
+
 @app.post("/distractions/log", status_code=status.HTTP_201_CREATED)
 def create_distraction_log(payload: DistractionLogCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     log = DistractionLog(user_id=current_user.id, **payload.model_dump())
@@ -430,6 +451,22 @@ def create_distraction_log(payload: DistractionLogCreate, current_user: User = D
     db.commit()
     db.refresh(log)
     return {"id": log.id}
+
+
+@app.get("/distractions/logs")
+@app.get("/api/distractions/logs")
+def distraction_logs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
+    logs = db.scalars(select(DistractionLog).where(DistractionLog.user_id == current_user.id).order_by(DistractionLog.log_date.desc(), DistractionLog.id.desc())).all()
+    return [
+        {
+            "id": log.id,
+            "log_date": log.log_date.isoformat(),
+            "source": log.source,
+            "minutes": log.minutes,
+            "notes": log.notes,
+        }
+        for log in logs
+    ]
 
 
 @app.get("/notifications", response_model=list[NotificationOut])
@@ -695,3 +732,66 @@ def analytics_live(current_user: User = Depends(get_current_user), life_db: Sess
 @app.get("/settings/life-os")
 def life_os_settings(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
     return build_life_os_settings(life_db, current_user.id)
+
+
+@app.get("/monitoring/overview")
+@app.get("/api/monitoring/overview")
+def monitoring_overview(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_monitoring_overview(life_db, current_user.id)
+
+
+@app.get("/monitoring/daily")
+@app.get("/api/monitoring/daily")
+def monitoring_daily(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_monitoring_daily(life_db, current_user.id, date)
+
+
+@app.get("/monitoring/weekly")
+@app.get("/api/monitoring/weekly")
+def monitoring_weekly(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_monitoring_weekly(life_db, current_user.id, date)
+
+
+@app.get("/api/tasks", response_model=list[GeneratedTaskOut])
+def api_tasks(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return generated_tasks(date, current_user, life_db)
+
+
+@app.post("/api/tasks", response_model=list[GeneratedTaskOut])
+def api_generate_tasks(date: date | None = None, force: bool = False, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return regenerate_tasks(date, force, current_user, life_db)
+
+
+@app.patch("/api/tasks/{task_id}", response_model=GeneratedTaskOut)
+def api_update_task(task_id: int, payload: GeneratedTaskUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return update_generated_task(task_id, payload, current_user, life_db)
+
+
+@app.get("/api/habits", response_model=list[HabitOut])
+def api_habits(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return get_habits(current_user, life_db)
+
+
+@app.post("/api/habits", response_model=HabitOut, status_code=status.HTTP_201_CREATED)
+def api_create_habit(payload: HabitCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return create_habit(payload, current_user, life_db)
+
+
+@app.patch("/api/habits/{habit_id}/log", status_code=status.HTTP_201_CREATED)
+def api_log_habit(habit_id: int, payload: HabitLogCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return log_habit(habit_id, payload, current_user, life_db)
+
+
+@app.get("/api/goals", response_model=list[GoalOut])
+def api_goals(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
+    return get_goals(current_user, life_db)
+
+
+@app.get("/api/calendar/events", response_model=list[CalendarEventOut])
+def api_calendar_events(start: datetime | None = None, end: datetime | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[CalendarEvent]:
+    return calendar_events(start, end, current_user, life_db)
+
+
+@app.get("/api/analytics/productivity")
+def api_productivity_analytics(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_life_os_analytics(life_db, current_user.id)
