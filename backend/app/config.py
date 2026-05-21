@@ -4,6 +4,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://finalplanner-monk-mode.vercel.app",
+]
+
+
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://finalplanner:finalplanner@localhost:5432/finalplanner"
     direct_url: str = ""
@@ -13,7 +20,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 10080
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = ",".join(DEFAULT_CORS_ORIGINS)
     resend_api_key: str = ""
     email_from: str = "FinalPlanner <alerts@finalplanner.local>"
     email_to: str = "skpersonal04@gmail.com"
@@ -30,7 +37,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return list(dict.fromkeys([*origins, *DEFAULT_CORS_ORIGINS]))
 
     @property
     def sqlalchemy_database_url(self) -> str:
