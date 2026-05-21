@@ -4,13 +4,14 @@ from datetime import date, datetime, time, timedelta
 import re
 
 import requests
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     CalendarEvent,
     DailyCheckIn,
+    DistractionLog,
     Exam,
     ExamDate,
     ExamDateStatus,
@@ -18,11 +19,13 @@ from app.models import (
     GeneratedDailyTask,
     Goal,
     GoalStatus,
+    GymLog,
     Habit,
     HabitLog,
     LifeTask,
     Milestone,
     ProductivityLog,
+    SleepLog,
     StudyPlan,
     StudyTaskType,
     SyllabusSubject,
@@ -239,6 +242,14 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
     created: list[GeneratedDailyTask] = []
     per_task_minutes = 30 if travel.enabled else 55
     max_tasks = max(2, available_minutes // per_task_minutes)
+    candidate_blocks = []
+    overdue_count = db.scalar(
+        select(func.count(GeneratedDailyTask.id)).where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date < target_date,
+            GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
+        )
+    ) or 0
     for plan in plans:
         exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
         if not exam:
@@ -251,8 +262,17 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
         )
         if not pending_topics:
             continue
-        topic = pending_topics[(target_date.toordinal() + exam.id) % len(pending_topics)]
         task_types = _task_mix(days_left, travel.enabled, travel.allow_mock_tests)
+        for topic in pending_topics[:6]:
+            urgency = max(0, 120 - days_left) / 12
+            weak_topic_weight = topic.weak_score / 10
+            low_completion_weight = max(0, 100 - topic.progress_percent) / 20
+            overdue_penalty = min(overdue_count, 5)
+            priority_score = urgency + weak_topic_weight + low_completion_weight + overdue_penalty + topic.difficulty
+            candidate_blocks.append((priority_score, exam, exam_date, days_left, topic, task_types))
+
+    candidate_blocks.sort(key=lambda item: item[0], reverse=True)
+    for priority_score, exam, _exam_date, days_left, topic, task_types in candidate_blocks:
         for task_type in task_types[: max(1, max_tasks // max(len(plans), 1))]:
             title = _task_title(exam, topic, task_type)
             if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title, GeneratedDailyTask.task_type == task_type)):
@@ -265,7 +285,7 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
                 title=title,
                 task_type=task_type,
                 estimated_minutes=_task_minutes(task_type, travel.enabled),
-                priority=5 if topic.weak_score >= 70 or days_left < 45 else 3,
+                priority=max(1, min(10, round(priority_score))),
                 generated_reason=_task_reason(days_left, topic, travel.enabled),
             )
             db.add(task)
@@ -439,6 +459,258 @@ def build_live_dashboard(db: Session, user_id: int) -> dict:
     }
 
 
+def build_realtime_dashboard(db: Session, user_id: int, metrics_db: Session | None = None) -> dict:
+    today = date.today()
+    week_days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    generate_daily_tasks(db, user_id, today)
+    for day in week_days:
+        update_productivity_log(db, user_id, day)
+    db.commit()
+
+    today_tasks = db.scalars(
+        select(GeneratedDailyTask)
+        .where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == today)
+        .order_by(GeneratedDailyTask.priority.desc(), GeneratedDailyTask.id)
+    ).all()
+    overdue_tasks = db.scalars(
+        select(GeneratedDailyTask)
+        .where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date < today,
+            GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
+        )
+        .order_by(GeneratedDailyTask.task_date, GeneratedDailyTask.priority.desc())
+        .limit(12)
+    ).all()
+    upcoming_tasks = db.scalars(
+        select(GeneratedDailyTask)
+        .where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date > today,
+            GeneratedDailyTask.task_date <= today + timedelta(days=7),
+        )
+        .order_by(GeneratedDailyTask.task_date, GeneratedDailyTask.priority.desc())
+        .limit(12)
+    ).all()
+    completed_tasks = sum(1 for task in today_tasks if task.status == TaskStatus.COMPLETED)
+    total_tasks = len(today_tasks)
+    focus_minutes_today = _focus_minutes_for_day(db, user_id, today)
+    sleep_hours_today = _sleep_hours_for_day(metrics_db, user_id, today)
+    distraction_minutes_today = _distraction_minutes_for_day(metrics_db, user_id, today)
+    gym_done = _gym_done_for_day(metrics_db, user_id, today)
+    discipline_score = _discipline_score(completed_tasks, total_tasks, focus_minutes_today, sleep_hours_today, distraction_minutes_today, gym_done)
+
+    weekly = []
+    for day in week_days:
+        day_tasks = db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == day)).all()
+        day_completed = sum(1 for task in day_tasks if task.status == TaskStatus.COMPLETED)
+        day_focus = _focus_minutes_for_day(db, user_id, day)
+        day_sleep = _sleep_hours_for_day(metrics_db, user_id, day)
+        day_distractions = _distraction_minutes_for_day(metrics_db, user_id, day)
+        day_score = _discipline_score(day_completed, len(day_tasks), day_focus, day_sleep, day_distractions, _gym_done_for_day(metrics_db, user_id, day))
+        weekly.append(
+            {
+                "date": day.isoformat(),
+                "score": day_score,
+                "completed": day_completed,
+                "total": len(day_tasks),
+                "completion": round(day_completed / max(len(day_tasks), 1) * 100, 1),
+                "study_minutes": sum(task.estimated_minutes for task in day_tasks if task.status == TaskStatus.COMPLETED),
+                "focus_minutes": day_focus,
+                "sleep_hours": day_sleep,
+                "distraction_minutes": day_distractions,
+            }
+        )
+
+    exams, weak_topics = _realtime_exam_cards(db, today)
+    warnings = _realtime_warnings(discipline_score, overdue_tasks, sleep_hours_today, distraction_minutes_today)
+    recommendations = _realtime_recommendations(discipline_score, overdue_tasks, weak_topics, exams, sleep_hours_today, distraction_minutes_today)
+    streak_calendar = _streak_calendar(weekly)
+
+    return {
+        "today": {
+            "date": today.isoformat(),
+            "discipline_score": discipline_score,
+            "completed_tasks": completed_tasks,
+            "total_tasks": total_tasks,
+            "focus_minutes": focus_minutes_today,
+            "gym_done": gym_done,
+            "sleep_hours": sleep_hours_today,
+            "distraction_minutes": distraction_minutes_today,
+            "warnings": warnings,
+        },
+        "weekly": {
+            "average_score": round(sum(day["score"] for day in weekly) / max(len(weekly), 1), 1),
+            "study_minutes": [{"date": day["date"], "minutes": day["study_minutes"]} for day in weekly],
+            "task_completion": [{"date": day["date"], "completion": day["completion"], "completed": day["completed"], "total": day["total"]} for day in weekly],
+            "focus_minutes": [{"date": day["date"], "minutes": day["focus_minutes"]} for day in weekly],
+            "sleep_hours": [{"date": day["date"], "hours": day["sleep_hours"], "score": day["score"]} for day in weekly],
+            "distraction_minutes": [{"date": day["date"], "minutes": day["distraction_minutes"], "score": day["score"]} for day in weekly],
+        },
+        "exams": exams,
+        "tasks": {
+            "today": [_task_payload(db, task) for task in today_tasks],
+            "overdue": [_task_payload(db, task) for task in overdue_tasks],
+            "upcoming": [_task_payload(db, task) for task in upcoming_tasks],
+        },
+        "streak": {
+            "current": _current_streak(db, user_id, today),
+            "best": _best_streak(db, user_id, today),
+            "calendar": streak_calendar,
+        },
+        "recommendations": recommendations,
+    }
+
+
+def _focus_minutes_for_day(db: Session, user_id: int, target_date: date) -> int:
+    return int(
+        db.scalar(
+            select(func.coalesce(func.sum(FocusSession.duration_minutes), 0)).where(
+                FocusSession.user_id == user_id,
+                FocusSession.start_time >= datetime.combine(target_date, time.min),
+                FocusSession.start_time <= datetime.combine(target_date, time.max),
+            )
+        )
+        or 0
+    )
+
+
+def _sleep_hours_for_day(db: Session | None, user_id: int, target_date: date) -> float:
+    if not db:
+        return 0
+    try:
+        return round(float(db.scalar(select(func.coalesce(func.sum(SleepLog.hours), 0)).where(SleepLog.user_id == user_id, SleepLog.sleep_date == target_date)) or 0), 1)
+    except SQLAlchemyError:
+        db.rollback()
+        return 0
+
+
+def _distraction_minutes_for_day(db: Session | None, user_id: int, target_date: date) -> int:
+    if not db:
+        return 0
+    try:
+        return int(db.scalar(select(func.coalesce(func.sum(DistractionLog.minutes), 0)).where(DistractionLog.user_id == user_id, DistractionLog.log_date == target_date)) or 0)
+    except SQLAlchemyError:
+        db.rollback()
+        return 0
+
+
+def _gym_done_for_day(db: Session | None, user_id: int, target_date: date) -> bool:
+    if not db:
+        return False
+    try:
+        return bool(db.scalar(select(func.count(GymLog.id)).where(GymLog.user_id == user_id, GymLog.log_date == target_date, GymLog.completed.is_(True))) or 0)
+    except SQLAlchemyError:
+        db.rollback()
+        return False
+
+
+def _discipline_score(completed: int, total: int, focus_minutes: int, sleep_hours: float, distraction_minutes: int, gym_done: bool) -> int:
+    completion_score = completed / max(total, 1) * 55
+    focus_score = min(focus_minutes / 150, 1) * 25
+    sleep_score = min(sleep_hours / 7, 1) * 10 if sleep_hours else 0
+    gym_score = 5 if gym_done else 0
+    distraction_penalty = min(distraction_minutes / 90, 1) * 15
+    return max(0, min(100, round(completion_score + focus_score + sleep_score + gym_score - distraction_penalty)))
+
+
+def _realtime_exam_cards(db: Session, today: date) -> tuple[list[dict], list[dict]]:
+    exams = db.scalars(select(Exam).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics))).all()
+    cards = []
+    weak_topics = []
+    for exam in exams:
+        topics = [topic for subject in exam.subjects for topic in subject.topics]
+        completion = round(sum(topic.progress_percent for topic in topics) / max(len(topics), 1), 1)
+        upcoming_dates = [item.exam_date for item in exam.dates if item.exam_date >= today]
+        exam_date = min(upcoming_dates) if upcoming_dates else min((item.exam_date for item in exam.dates), default=today)
+        days_left = max((exam_date - today).days, 0)
+        readiness = round(min(100, completion * 0.72 + min(28, max(0, 120 - days_left) * 0.18)), 1)
+        exam_weak_topics = [
+            {"id": topic.id, "name": topic.name, "progress": round(topic.progress_percent, 1), "weak_score": round(topic.weak_score, 1), "exam": exam.name}
+            for topic in sorted(topics, key=lambda item: (-item.weak_score, item.progress_percent, -item.difficulty))[:5]
+            if topic.progress_percent < 90
+        ]
+        weak_topics.extend(exam_weak_topics)
+        cards.append(
+            {
+                "id": exam.id,
+                "name": exam.name,
+                "exam_date": exam_date.isoformat(),
+                "days_left": days_left,
+                "syllabus_completion": completion,
+                "readiness_score": readiness,
+                "weak_topics": exam_weak_topics,
+            }
+        )
+    return sorted(cards, key=lambda item: item["days_left"]), weak_topics
+
+
+def _realtime_warnings(score: int, overdue_tasks: list[GeneratedDailyTask], sleep_hours: float, distraction_minutes: int) -> list[str]:
+    warnings = []
+    if score < 50:
+        warnings.append("Recovery mode recommended: discipline score is below 50.")
+    if overdue_tasks:
+        warnings.append(f"{len(overdue_tasks)} overdue task(s) need a lighter carry-forward plan.")
+    if sleep_hours and sleep_hours < 6:
+        warnings.append("Sleep is below the recovery threshold.")
+    if distraction_minutes > 45:
+        warnings.append("Distraction time is cutting into deep-work capacity.")
+    return warnings
+
+
+def _realtime_recommendations(score: int, overdue_tasks: list[GeneratedDailyTask], weak_topics: list[dict], exams: list[dict], sleep_hours: float, distraction_minutes: int) -> list[str]:
+    recommendations = []
+    if overdue_tasks:
+        recommendations.append("Start with the highest-priority overdue block, capped at 45 minutes.")
+    if weak_topics:
+        recommendations.append(f"Schedule revision plus practice for {weak_topics[0]['name']}.")
+    if exams and exams[0]["days_left"] <= 30:
+        recommendations.append(f"Add one mock-test analysis block for {exams[0]['name']}.")
+    if score < 60:
+        recommendations.append("Use recovery mode today: fewer blocks, higher completion quality.")
+    if sleep_hours and sleep_hours < 6:
+        recommendations.append("Protect a sleep recovery window before adding more workload.")
+    if distraction_minutes > 45:
+        recommendations.append("Enable anti-distraction mode for the next focus session.")
+    if not recommendations:
+        recommendations.append("Keep the current plan: finish today's active block and log focus minutes.")
+    return recommendations
+
+
+def _streak_calendar(weekly: list[dict]) -> list[dict]:
+    return [{"date": day["date"], "score": day["score"], "completed": day["completion"] >= 70 or day["score"] >= 70} for day in weekly]
+
+
+def _current_streak(db: Session, user_id: int, today: date) -> int:
+    streak = 0
+    for offset in range(0, 30):
+        day = today - timedelta(days=offset)
+        tasks = db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == day)).all()
+        completed = sum(1 for task in tasks if task.status == TaskStatus.COMPLETED)
+        if tasks and completed / max(len(tasks), 1) >= 0.7:
+            streak += 1
+        elif offset == 0 and not tasks:
+            continue
+        else:
+            break
+    return streak
+
+
+def _best_streak(db: Session, user_id: int, today: date) -> int:
+    best = 0
+    current = 0
+    for offset in range(29, -1, -1):
+        day = today - timedelta(days=offset)
+        tasks = db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == day)).all()
+        completed = sum(1 for task in tasks if task.status == TaskStatus.COMPLETED)
+        if tasks and completed / max(len(tasks), 1) >= 0.7:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
 def build_life_os_weekly_review(db: Session, user_id: int, week_end: date | None = None) -> dict:
     week_end = week_end or date.today()
     week_start = week_end - timedelta(days=6)
@@ -515,6 +787,17 @@ def build_life_os_notifications(db: Session, user_id: int) -> list[dict]:
                 "title": f"{next_exam['name']} countdown",
                 "body": f"{next_exam['days_left']} day(s) left until {next_exam['exam_date']}.",
                 "level": "RED" if next_exam["days_left"] <= 21 else "GREEN",
+                "created_at": datetime.utcnow().isoformat(),
+            }
+        )
+    if dashboard["productivity_score"] < 60:
+        notifications.append(
+            {
+                "id": "low_score_recovery",
+                "type": "recovery",
+                "title": "Recovery mode suggested",
+                "body": "Productivity is below 60%. Use a lighter plan, clear overdue work first, and protect one deep-work block.",
+                "level": "ORANGE" if dashboard["productivity_score"] >= 40 else "RED",
                 "created_at": datetime.utcnow().isoformat(),
             }
         )

@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import logging
 
 import sentry_sdk
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -17,6 +18,7 @@ from app.life_os import (
     build_life_os_settings,
     build_life_os_weekly_review,
     build_live_dashboard,
+    build_realtime_dashboard,
     build_monitoring_daily,
     build_monitoring_overview,
     build_monitoring_weekly,
@@ -70,13 +72,23 @@ from app.services import build_weekly_review, calculate_daily_discipline_score, 
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 if settings.sentry_dsn:
     sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
 
 app = FastAPI(title="FinalPlanner Life OS API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origins=[
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -712,6 +724,19 @@ def get_focus_sessions(current_user: User = Depends(get_current_user), life_db: 
 @app.get("/dashboard/live")
 def dashboard_live(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)):
     return build_live_dashboard(life_db, current_user.id)
+
+
+@app.get("/dashboard/realtime")
+def dashboard_realtime(current_user: User = Depends(get_current_user), db: Session = Depends(get_db), life_db: Session = Depends(get_life_os_db)) -> dict:
+    try:
+        return build_realtime_dashboard(life_db, current_user.id, db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        life_db.rollback()
+        db.rollback()
+        logger.exception("Realtime dashboard failed for user_id=%s", current_user.id)
+        raise HTTPException(status_code=500, detail="Realtime dashboard failed to load safely") from exc
 
 
 @app.get("/weekly-review/live")

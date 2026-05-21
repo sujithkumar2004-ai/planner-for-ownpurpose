@@ -231,7 +231,7 @@ export default function DailyPlannerPage() {
             </div>
             <h3 className="text-2xl font-bold text-white mb-2">Day Complete!</h3>
             <p className="text-zinc-400 text-center max-w-sm">
-              You've successfully finished all your planned tasks for today. Outstanding work!
+              You&apos;ve successfully finished all your planned tasks for today. Outstanding work!
             </p>
           </motion.div>
         )}

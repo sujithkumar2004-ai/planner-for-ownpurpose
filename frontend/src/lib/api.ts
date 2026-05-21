@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
 
 export type Task = {
   id: number;
@@ -116,6 +116,63 @@ export type LiveDashboard = {
   productivity_score: number;
   habit_completion_rate: number;
   travel_mode: boolean;
+};
+
+export type RealtimeTask = {
+  id: number;
+  exam_id: number | null;
+  exam_name?: string | null;
+  topic_id: number | null;
+  topic_name?: string | null;
+  task_date: string;
+  title: string;
+  task_type: string;
+  status: TaskStatus;
+  estimated_minutes: number;
+  priority: number;
+  generated_reason?: string | null;
+};
+
+export type RealtimeDashboard = {
+  today: {
+    date: string;
+    discipline_score: number;
+    completed_tasks: number;
+    total_tasks: number;
+    focus_minutes: number;
+    gym_done: boolean;
+    sleep_hours: number;
+    distraction_minutes: number;
+    warnings: string[];
+  };
+  weekly: {
+    average_score: number;
+    study_minutes: Array<{ date: string; minutes: number }>;
+    task_completion: Array<{ date: string; completion: number; completed: number; total: number }>;
+    focus_minutes: Array<{ date: string; minutes: number }>;
+    sleep_hours: Array<{ date: string; hours: number; score: number }>;
+    distraction_minutes: Array<{ date: string; minutes: number; score: number }>;
+  };
+  exams: Array<{
+    id: number;
+    name: string;
+    exam_date: string;
+    days_left: number;
+    syllabus_completion: number;
+    readiness_score: number;
+    weak_topics: Array<{ id: number; name: string; progress: number; weak_score: number; exam: string }>;
+  }>;
+  tasks: {
+    today: RealtimeTask[];
+    overdue: RealtimeTask[];
+    upcoming: RealtimeTask[];
+  };
+  streak: {
+    current: number;
+    best: number;
+    calendar: Array<{ date: string; score: number; completed: boolean }>;
+  };
+  recommendations: string[];
 };
 
 export type GeneratedTask = {
