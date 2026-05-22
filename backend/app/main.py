@@ -1,8 +1,9 @@
 from datetime import date, datetime, timedelta
 import logging
+import os
 
 import sentry_sdk
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -76,23 +77,29 @@ logger = logging.getLogger(__name__)
 if settings.sentry_dsn:
     sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
 
+logger.warning(
+    "Startup config ENV=%s CORS_ORIGINS=%s FRONTEND_ORIGINS=%s",
+    os.getenv("ENV") or os.getenv("RAILWAY_ENVIRONMENT_NAME") or "unset",
+    settings.cors_origin_list,
+    [origin for origin in settings.cors_origin_list if "vercel.app" in origin],
+)
+
 app = FastAPI(title="FinalPlanner Life OS API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:3002",
-    "http://localhost:3003",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://127.0.0.1:3002",
-    "http://127.0.0.1:3003",
-],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_request_origin(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin:
+        logger.warning("Request origin path=%s method=%s origin=%s", request.url.path, request.method, origin)
+    return await call_next(request)
 
 
 @app.get("/health")

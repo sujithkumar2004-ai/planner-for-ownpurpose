@@ -1,4 +1,11 @@
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "production" ? "https://planner-for-ownpurpose-production.up.railway.app" : "http://127.0.0.1:8000")
+).replace(/\/+$/, "");
+
+export function apiUrl(path: string) {
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
 
 export type Task = {
   id: number;
@@ -40,7 +47,7 @@ export type Dashboard = {
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("finalplanner_token") : null;
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",

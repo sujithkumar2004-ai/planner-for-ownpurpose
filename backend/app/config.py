@@ -6,7 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
     "https://finalplanner-monk-mode.vercel.app",
 ]
 
@@ -37,7 +43,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        origins = [normalize_origin(origin) for origin in self.cors_origins.split(",") if origin.strip()]
         return list(dict.fromkeys([*origins, *DEFAULT_CORS_ORIGINS]))
 
     @property
@@ -66,3 +72,7 @@ def normalize_sqlalchemy_url(url: str) -> str:
     parts = urlsplit(url)
     query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "pgbouncer"]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def normalize_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
