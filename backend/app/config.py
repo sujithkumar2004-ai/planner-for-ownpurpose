@@ -20,7 +20,7 @@ DEFAULT_CORS_ORIGINS = [
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://finalplanner:finalplanner@localhost:5432/finalplanner"
     direct_url: str = ""
-    life_os_database_url: str = "mysql+pymysql://finalplanner:finalplanner@localhost:3306/finalplanner_life_os?charset=utf8mb4"
+    life_os_database_url: str = "postgresql+psycopg://finalplanner:finalplanner@localhost:5432/finalplanner"
     life_os_direct_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = "change-me-in-production"

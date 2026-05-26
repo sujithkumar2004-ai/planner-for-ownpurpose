@@ -3,11 +3,11 @@
 ## Frontend: Vercel
 
 1. Import the GitHub repository.
-2. Set root directory to `frontend`.
-3. Add `NEXT_PUBLIC_API_BASE_URL` pointing to the Railway backend.
+2. Keep the Vercel root directory at the repository root; root `vercel.json` builds the Next.js app from `frontend`.
+3. Add `NEXT_PUBLIC_API_BASE_URL` pointing to the Railway or Render backend.
 4. Push to GitHub. Vercel auto-deploys on push.
 
-## Backend: Railway
+## Backend: Railway Or Render
 
 1. Create a Railway project from the GitHub repository.
 2. Create the FastAPI web service from root `railway.json`.
@@ -15,9 +15,12 @@
 4. Create a Celery beat service using `infra/railway-beat.json`.
 5. Set `DATABASE_URL` to the Supabase pooled connection string.
 6. Set `DIRECT_URL` to the Supabase direct connection string for Alembic migrations.
-7. Set `REDIS_URL` to Upstash Redis.
-8. Set `RESEND_API_KEY`, `EMAIL_FROM`, and `EMAIL_TO`.
-9. The web service runs FastAPI through Gunicorn/Uvicorn. Worker runs Celery. Beat runs scheduled email jobs.
+7. Set `LIFE_OS_DATABASE_URL` to PostgreSQL as well; it may point at the same database as `DATABASE_URL`.
+8. Set `LIFE_OS_DIRECT_URL` when the planner database uses a separate direct migration URL.
+9. Set `REDIS_URL` to Upstash Redis.
+10. Set `JWT_SECRET`, `CORS_ORIGINS`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
+11. Set `RESEND_API_KEY`, `EMAIL_FROM`, and `EMAIL_TO`.
+12. The web service runs FastAPI through Gunicorn/Uvicorn. Worker runs Celery. Beat runs scheduled email jobs.
 
 Railway should be connected directly to GitHub with automatic deploys enabled on branch `main`. No manual CLI deploy is required after setup.
 
@@ -40,6 +43,7 @@ Use Supabase PostgreSQL for production. Run Alembic migrations from the backend 
 ```bash
 cd backend
 alembic upgrade head
+alembic -c life_os_alembic.ini upgrade head
 ```
 
 ## Backups

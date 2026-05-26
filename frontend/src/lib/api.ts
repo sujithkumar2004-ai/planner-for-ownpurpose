@@ -123,6 +123,7 @@ export type LiveDashboard = {
   productivity_score: number;
   habit_completion_rate: number;
   travel_mode: boolean;
+  comeback_mode?: ComebackMode;
 };
 
 export type RealtimeTask = {
@@ -220,9 +221,43 @@ export type ExamCatalog = {
 
 export type TravelMode = {
   enabled: boolean;
+  start_date: string | null;
+  end_date: string | null;
   allow_mock_tests: boolean;
   daily_minutes: number;
   notes: string | null;
+};
+
+export type StudyPlan = {
+  id: number;
+  exam_id: number;
+  exam_name: string;
+  active: boolean;
+  available_hours_per_day: number;
+  priority: number;
+  start_date: string;
+  end_date: string;
+};
+
+export type ComebackMode = {
+  active: boolean;
+  date: string;
+  backlog_tasks: number;
+  weak_topic_count: number;
+  daily_score_warning: boolean;
+  warning: string | null;
+  recovery_plan: Array<{ topic_id: number; topic: string; progress: number; weak_score: number; action: string }>;
+};
+
+export type MockScore = {
+  id: number;
+  exam_id: number;
+  exam_name: string | null;
+  taken_on: string;
+  score: number;
+  max_score: number;
+  analysis: string | null;
+  weak_topics: Record<string, unknown>;
 };
 
 export type LifeAnalytics = {
@@ -244,7 +279,7 @@ export type LifeNotification = {
 };
 
 export type LifeSettings = {
-  selected_exams: Array<{ exam_id: number; exam_name: string; active: boolean; available_hours_per_day: number }>;
+  selected_exams: Array<{ exam_id: number; exam_name: string; active: boolean; available_hours_per_day: number; priority: number; start_date: string; end_date: string }>;
   travel_mode: TravelMode;
   notification_preferences: {
     daily_task_reminders: boolean;

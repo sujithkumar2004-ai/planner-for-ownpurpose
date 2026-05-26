@@ -366,6 +366,9 @@ class StudyPlanCreate(BaseModel):
     exam_id: int
     active: bool = True
     available_hours_per_day: float = Field(default=4.0, ge=0.5, le=12)
+    priority: int = Field(default=3, ge=1, le=5)
+    start_date: date = date(2026, 6, 1)
+    end_date: date = date(2027, 6, 1)
 
 
 class GeneratedTaskOut(BaseModel):
@@ -387,6 +390,8 @@ class GeneratedTaskOut(BaseModel):
 
 class GeneratedTaskUpdate(BaseModel):
     status: TaskStatus
+    minutes_spent: int = Field(default=0, ge=0, le=720)
+    notes: str | None = None
 
 
 class CalendarEventCreate(BaseModel):
@@ -420,6 +425,8 @@ class CalendarEventOut(BaseModel):
 
 class TravelModeOut(BaseModel):
     enabled: bool
+    start_date: date | None
+    end_date: date | None
     allow_mock_tests: bool
     daily_minutes: int
     notes: str | None
@@ -429,6 +436,22 @@ class TravelModeOut(BaseModel):
 
 class TravelModeUpdate(BaseModel):
     enabled: bool
+    start_date: date | None = None
+    end_date: date | None = None
     allow_mock_tests: bool = False
     daily_minutes: int = Field(default=90, ge=15, le=360)
     notes: str | None = None
+
+
+class SyllabusTopicUpdate(BaseModel):
+    progress_percent: float | None = Field(default=None, ge=0, le=100)
+    weak_score: float | None = Field(default=None, ge=0, le=100)
+
+
+class MockScoreCreate(BaseModel):
+    exam_id: int
+    taken_on: date
+    score: float = Field(ge=0)
+    max_score: float = Field(default=100, gt=0)
+    analysis: str | None = None
+    weak_topics: dict = {}

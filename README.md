@@ -135,7 +135,7 @@ Daily missed-task email runs at 11:30 PM. Weekly summary runs Sunday at 9 PM.
 Frontend:
 
 1. Import the GitHub repo in Vercel.
-2. Set root directory to `frontend`.
+2. Keep the Vercel root directory at the repository root so root `vercel.json` can run `cd frontend && npm ci && npm run build`.
 3. Set `NEXT_PUBLIC_API_BASE_URL`.
 4. Push to `main`; Vercel auto-deploys.
 5. Configure `NEXT_PUBLIC_SENTRY_DSN` after creating the Sentry frontend project.
@@ -147,9 +147,9 @@ Backend:
 3. Add a second Railway service for the Celery worker and set its Railway config to `infra/railway-worker.json`.
 4. Add a third Railway service for Celery beat and set its Railway config to `infra/railway-beat.json`.
 5. Set `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, and `SENTRY_DSN`.
-6. Use Supabase PostgreSQL and Upstash Redis.
-7. Set `LIFE_OS_DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/DB?charset=utf8mb4` for the backend, worker, and beat services.
-8. Run Life OS MySQL migrations with `alembic -c life_os_alembic.ini upgrade head`.
+6. Use Supabase/Railway PostgreSQL and Upstash Redis.
+7. Set `LIFE_OS_DATABASE_URL` to the same PostgreSQL database, or to a second PostgreSQL database if you want the planner tables isolated.
+8. Run Life OS PostgreSQL migrations with `alembic -c life_os_alembic.ini upgrade head`.
 9. Railway auto-deploys on GitHub push.
 10. Health check path is `/health`.
 11. The web service runs legacy `alembic upgrade head` before Gunicorn/Uvicorn; add `alembic -c life_os_alembic.ini upgrade head` when `LIFE_OS_DATABASE_URL` is configured.
@@ -164,7 +164,7 @@ CI/CD:
 Required hosted secrets:
 
 - Vercel: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_SENTRY_DSN`
-- Railway: `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
+- Railway/Render: `DATABASE_URL`, `DIRECT_URL`, `LIFE_OS_DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_TO`, `SENTRY_DSN`
 - GitHub Actions: `BACKEND_URL`, `FRONTEND_URL`, optional `BACKEND_CRON_URL`
 
 Railway GitHub auto-deploy:

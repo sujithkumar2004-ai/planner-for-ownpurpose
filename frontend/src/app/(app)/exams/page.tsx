@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import Link from "next/link";
 import { CalendarClock, Loader2, RefreshCw } from "lucide-react";
 
 import { apiFetch, ExamCatalog } from "@/lib/api";
@@ -38,7 +39,7 @@ export default function ExamsPage() {
             <Card key={exam.id}>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-3">
-                  <span>{exam.name}</span>
+                  <Link href={`/exams/${exam.id}`} className="hover:text-purple-300">{exam.name}</Link>
                   {mainDate && <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground"><CalendarClock className="h-4 w-4" />{mainDate.exam_date} · {mainDate.status.toLowerCase()}</span>}
                 </CardTitle>
               </CardHeader>

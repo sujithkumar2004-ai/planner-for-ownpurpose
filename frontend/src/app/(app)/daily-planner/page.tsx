@@ -7,11 +7,21 @@ import { Check, Clock, Play, MoreVertical, CheckCircle2, Loader2, Plane, Refresh
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
+const PLANNER_START = "2026-06-01";
+const PLANNER_END = "2027-06-01";
+
+function defaultPlannerDate() {
+  const today = new Date().toISOString().split("T")[0];
+  if (today < PLANNER_START) return PLANNER_START;
+  if (today > PLANNER_END) return PLANNER_END;
+  return today;
+}
+
 export default function DailyPlannerPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(defaultPlannerDate);
 
-  const today = new Date().toISOString().split("T")[0];
-  const { data: tasks, error, mutate } = useSWR<GeneratedTask[]>(`/generated-daily-tasks?date=${today}`, apiFetch);
+  const { data: tasks, error, mutate } = useSWR<GeneratedTask[]>(`/generated-daily-tasks?date=${selectedDate}`, apiFetch);
   const { data: travelMode, mutate: mutateTravel } = useSWR<TravelMode>("/travel-mode", apiFetch);
 
   useEffect(() => {
@@ -60,7 +70,7 @@ export default function DailyPlannerPage() {
   const regenerate = async (force = false) => {
     setIsSubmitting(true);
     try {
-      await apiFetch(`/generated-daily-tasks/generate?date=${today}&force=${force}`, {
+      await apiFetch(`/generated-daily-tasks/generate?date=${selectedDate}&force=${force}`, {
         method: "POST",
       });
       mutate();
@@ -75,7 +85,14 @@ export default function DailyPlannerPage() {
     const enabled = !travelMode?.enabled;
     await apiFetch("/travel-mode", {
       method: "PATCH",
-      body: JSON.stringify({ enabled, allow_mock_tests: travelMode?.allow_mock_tests ?? false, daily_minutes: enabled ? 90 : 240, notes: enabled ? "Lightweight travel schedule" : null })
+      body: JSON.stringify({
+        enabled,
+        start_date: enabled ? selectedDate : travelMode?.start_date ?? null,
+        end_date: enabled ? selectedDate : travelMode?.end_date ?? null,
+        allow_mock_tests: travelMode?.allow_mock_tests ?? false,
+        daily_minutes: enabled ? 90 : 240,
+        notes: enabled ? "Lightweight travel schedule" : null
+      })
     });
     mutateTravel();
     mutate();
@@ -89,11 +106,19 @@ export default function DailyPlannerPage() {
 
   return (
     <div className="grid gap-8 max-w-4xl mx-auto py-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white">Daily Execution</h1>
           <p className="text-sm text-zinc-400 mt-1">Generated from exams, syllabus progress, backlog, and travel mode.</p>
         </div>
+        <input
+          type="date"
+          min={PLANNER_START}
+          max={PLANNER_END}
+          value={selectedDate}
+          onChange={(event) => setSelectedDate(event.target.value)}
+          className="h-10 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white outline-none focus:ring-2 focus:ring-purple-500"
+        />
         <button
           onClick={toggleTravelMode}
           className={cn("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border", travelMode?.enabled ? "bg-sky-500/20 text-sky-200 border-sky-400/30" : "bg-white/10 hover:bg-white/15 text-white border-white/5")}

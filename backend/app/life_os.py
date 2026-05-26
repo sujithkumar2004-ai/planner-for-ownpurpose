@@ -17,6 +17,7 @@ from app.models import (
     ExamDateStatus,
     FocusSession,
     GeneratedDailyTask,
+    GeneratedTaskLog,
     Goal,
     GoalStatus,
     GymLog,
@@ -24,6 +25,7 @@ from app.models import (
     HabitLog,
     LifeTask,
     Milestone,
+    MockScore,
     ProductivityLog,
     SleepLog,
     StudyPlan,
@@ -34,19 +36,22 @@ from app.models import (
     TravelModeSettings,
 )
 
+PLANNER_START = date(2026, 6, 1)
+PLANNER_END = date(2027, 6, 1)
+
 
 OFFICIAL_EXAM_SOURCES = {
-    "CAT2026": "https://iimcat.ac.in/",
-    "GATE_DA_2026": "https://gate2026.iitg.ac.in/",
-    "GATE_ME_2026": "https://gate2026.iitg.ac.in/",
-    "JAM_MA_2026": "https://jam2026.iitb.ac.in/",
-    "JAM_PH_2026": "https://jam2026.iitb.ac.in/",
+    "CAT": "https://iimcat.ac.in/",
+    "GATE_DA": "https://gate2026.iitg.ac.in/",
+    "GATE_ME": "https://gate2026.iitg.ac.in/",
+    "JAM_MA": "https://jam2026.iitb.ac.in/",
+    "JAM_PH": "https://jam2026.iitb.ac.in/",
 }
 
 
 EXAM_CATALOG = {
-    "CAT2026": {
-        "name": "CAT 2026",
+    "CAT": {
+        "name": "CAT",
         "date": date(2026, 11, 29),
         "status": ExamDateStatus.TENTATIVE,
         "description": "Common Admission Test preparation plan.",
@@ -56,10 +61,10 @@ EXAM_CATALOG = {
             "Quant": ["Arithmetic", "Algebra", "Geometry", "Number systems", "Modern math", "Mensuration"],
         },
     },
-    "GATE_DA_2026": {
-        "name": "GATE DA 2026",
-        "date": date(2026, 2, 15),
-        "status": ExamDateStatus.OFFICIAL,
+    "GATE_DA": {
+        "name": "GATE DA",
+        "date": date(2027, 2, 15),
+        "status": ExamDateStatus.TENTATIVE,
         "description": "GATE Data Science and Artificial Intelligence preparation plan.",
         "subjects": {
             "Probability/Statistics": ["Counting", "Probability axioms", "Random variables", "Distributions", "Estimation", "Hypothesis testing"],
@@ -71,10 +76,10 @@ EXAM_CATALOG = {
             "AI": ["Search", "Logic", "Planning", "Knowledge representation", "Reasoning", "Neural networks"],
         },
     },
-    "GATE_ME_2026": {
-        "name": "GATE ME 2026",
-        "date": date(2026, 2, 14),
-        "status": ExamDateStatus.OFFICIAL,
+    "GATE_ME": {
+        "name": "GATE Mechanical",
+        "date": date(2027, 2, 14),
+        "status": ExamDateStatus.TENTATIVE,
         "description": "GATE Mechanical Engineering preparation plan.",
         "subjects": {
             "Engineering Mathematics": ["Linear algebra", "Calculus", "Differential equations", "Complex variables", "Probability", "Numerical methods"],
@@ -83,10 +88,10 @@ EXAM_CATALOG = {
             "Materials/Manufacturing/Industrial": ["Materials", "Casting", "Metal forming", "Machining", "Metrology", "Operations research"],
         },
     },
-    "JAM_MA_2026": {
-        "name": "JAM MA 2026",
-        "date": date(2026, 2, 15),
-        "status": ExamDateStatus.OFFICIAL,
+    "JAM_MA": {
+        "name": "JAM Mathematics",
+        "date": date(2027, 2, 15),
+        "status": ExamDateStatus.TENTATIVE,
         "description": "IIT JAM Mathematics preparation plan.",
         "subjects": {
             "Real Analysis": ["Sequences", "Series", "Continuity", "Differentiability", "Riemann integration", "Metric spaces"],
@@ -96,10 +101,10 @@ EXAM_CATALOG = {
             "Algebra": ["Groups", "Subgroups", "Cyclic groups", "Rings", "Fields", "Polynomials"],
         },
     },
-    "JAM_PH_2026": {
-        "name": "JAM PH 2026",
-        "date": date(2026, 2, 15),
-        "status": ExamDateStatus.OFFICIAL,
+    "JAM_PH": {
+        "name": "JAM Physics",
+        "date": date(2027, 2, 15),
+        "status": ExamDateStatus.TENTATIVE,
         "description": "IIT JAM Physics preparation plan.",
         "subjects": {
             "Mathematical Methods": ["Vector algebra", "Calculus", "Differential equations", "Matrices", "Fourier series", "Complex analysis"],
@@ -115,6 +120,9 @@ EXAM_CATALOG = {
 
 
 def ensure_exam_catalog(db: Session, user_id: int | None = None) -> None:
+    for legacy_exam in db.scalars(select(Exam).where(Exam.code.notin_(list(EXAM_CATALOG.keys())))).all():
+        legacy_exam.active = False
+        db.add(legacy_exam)
     for exam_index, (code, config) in enumerate(EXAM_CATALOG.items()):
         exam = db.scalar(select(Exam).where(Exam.code == code))
         if not exam:
@@ -155,7 +163,8 @@ def ensure_exam_catalog(db: Session, user_id: int | None = None) -> None:
                 topic.source_ref = f"{config['name']} syllabus import"
 
         if user_id and not db.scalar(select(StudyPlan).where(StudyPlan.user_id == user_id, StudyPlan.exam_id == exam.id)):
-            db.add(StudyPlan(user_id=user_id, exam_id=exam.id, active=True, available_hours_per_day=4.0))
+            priority = 5 if code in {"CAT", "GATE_DA"} else 3
+            db.add(StudyPlan(user_id=user_id, exam_id=exam.id, active=True, available_hours_per_day=4.0, priority=priority, start_date=PLANNER_START, end_date=PLANNER_END))
 
     if user_id and not db.scalar(select(TravelModeSettings).where(TravelModeSettings.user_id == user_id)):
         db.add(TravelModeSettings(user_id=user_id))
@@ -172,10 +181,29 @@ def get_travel_settings(db: Session, user_id: int) -> TravelModeSettings:
     return settings
 
 
+def planner_date(target_date: date | None = None) -> date:
+    value = target_date or date.today()
+    if value < PLANNER_START:
+        return PLANNER_START
+    if value > PLANNER_END:
+        return PLANNER_END
+    return value
+
+
+def travel_mode_active(settings: TravelModeSettings, target_date: date) -> bool:
+    if not settings.enabled:
+        return False
+    if settings.start_date and target_date < settings.start_date:
+        return False
+    if settings.end_date and target_date > settings.end_date:
+        return False
+    return True
+
+
 def refresh_exam_dates(db: Session) -> list[ExamDate]:
     ensure_exam_catalog(db)
     refreshed: list[ExamDate] = []
-    for exam in db.scalars(select(Exam)).all():
+    for exam in db.scalars(select(Exam).where(Exam.active.is_(True))).all():
         exam_date = db.scalar(select(ExamDate).where(ExamDate.exam_id == exam.id, ExamDate.label == "Main exam"))
         if not exam_date or exam_date.manually_overridden:
             continue
@@ -200,23 +228,32 @@ def refresh_exam_dates(db: Session) -> list[ExamDate]:
 def _extract_date_for_exam(code: str, html: str) -> date | None:
     compact = re.sub(r"\s+", " ", html)
     patterns = [
-        r"(\d{1,2})\s+February\s+2026",
-        r"February\s+(\d{1,2}),?\s+2026",
-        r"(\d{1,2})\s+November\s+2026",
-        r"November\s+(\d{1,2}),?\s+2026",
+        r"(\d{1,2})\s+(February|November)\s+(2026|2027)",
+        r"(February|November)\s+(\d{1,2}),?\s+(2026|2027)",
     ]
-    month = 11 if code == "CAT2026" else 2
     for pattern in patterns:
         for match in re.finditer(pattern, compact, flags=re.IGNORECASE):
-            day = int(match.group(1))
-            if 1 <= day <= 31:
-                return date(2026, month, day)
+            groups = match.groups()
+            if groups[0].isdigit():
+                day = int(groups[0])
+                month_name = groups[1]
+                year = int(groups[2])
+            else:
+                month_name = groups[0]
+                day = int(groups[1])
+                year = int(groups[2])
+            month = 11 if month_name.lower() == "november" else 2
+            found = date(year, month, day)
+            if 1 <= day <= 31 and PLANNER_START <= found <= PLANNER_END:
+                return found
     return None
 
 
 def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = None, force: bool = False) -> list[GeneratedDailyTask]:
     ensure_exam_catalog(db, user_id)
-    target_date = target_date or date.today()
+    target_date = target_date or planner_date()
+    if target_date < PLANNER_START or target_date > PLANNER_END:
+        return []
     if force:
         existing = db.scalars(
             select(GeneratedDailyTask).where(
@@ -234,13 +271,22 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
         return existing_today
 
     travel = get_travel_settings(db, user_id)
-    plans = db.scalars(select(StudyPlan).where(StudyPlan.user_id == user_id, StudyPlan.active.is_(True))).all()
-    available_minutes = travel.daily_minutes if travel.enabled else int(sum(plan.available_hours_per_day for plan in plans) * 60 / max(len(plans), 1))
+    in_travel = travel_mode_active(travel, target_date)
+    plans = db.scalars(
+        select(StudyPlan).where(
+            StudyPlan.user_id == user_id,
+            StudyPlan.active.is_(True),
+            StudyPlan.start_date <= target_date,
+            StudyPlan.end_date >= target_date,
+        )
+    ).all()
+    available_minutes = travel.daily_minutes if in_travel else int(sum(plan.available_hours_per_day * plan.priority for plan in plans) * 60 / max(sum(plan.priority for plan in plans), 1))
     available_minutes = max(45, min(available_minutes, 360))
 
-    carry_forward_missed_tasks(db, user_id, target_date, travel.enabled)
+    comeback = comeback_mode_summary(db, user_id, target_date)
+    carry_forward_missed_tasks(db, user_id, target_date, in_travel)
     created: list[GeneratedDailyTask] = []
-    per_task_minutes = 30 if travel.enabled else 55
+    per_task_minutes = 30 if in_travel else 45 if comeback["active"] else 55
     max_tasks = max(2, available_minutes // per_task_minutes)
     candidate_blocks = []
     overdue_count = db.scalar(
@@ -258,17 +304,18 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
         days_left = max((exam_date - target_date).days, 0)
         pending_topics = sorted(
             [topic for subject in exam.subjects for topic in subject.topics if topic.progress_percent < 100],
-            key=lambda topic: (topic.progress_percent, -topic.weak_score, -topic.difficulty, topic.id),
+            key=lambda topic: (topic.progress_percent, -topic.weak_score, -topic.subject.weight, -topic.difficulty, topic.id),
         )
         if not pending_topics:
             continue
-        task_types = _task_mix(days_left, travel.enabled, travel.allow_mock_tests)
+        task_types = _task_mix(days_left, in_travel, travel.allow_mock_tests, comeback["active"])
         for topic in pending_topics[:6]:
             urgency = max(0, 120 - days_left) / 12
             weak_topic_weight = topic.weak_score / 10
             low_completion_weight = max(0, 100 - topic.progress_percent) / 20
+            subject_weight = topic.subject.weight * 1.5
             overdue_penalty = min(overdue_count, 5)
-            priority_score = urgency + weak_topic_weight + low_completion_weight + overdue_penalty + topic.difficulty
+            priority_score = urgency + weak_topic_weight + low_completion_weight + subject_weight + overdue_penalty + topic.difficulty + plan.priority * 2
             candidate_blocks.append((priority_score, exam, exam_date, days_left, topic, task_types))
 
     candidate_blocks.sort(key=lambda item: item[0], reverse=True)
@@ -284,9 +331,9 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
                 task_date=target_date,
                 title=title,
                 task_type=task_type,
-                estimated_minutes=_task_minutes(task_type, travel.enabled),
+                estimated_minutes=_task_minutes(task_type, in_travel, comeback["active"]),
                 priority=max(1, min(10, round(priority_score))),
-                generated_reason=_task_reason(days_left, topic, travel.enabled),
+                generated_reason=_task_reason(days_left, topic, in_travel, comeback["active"]),
             )
             db.add(task)
             try:
@@ -356,13 +403,14 @@ def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, tra
             _ensure_calendar_event_for_task(db, user_id, carried, 1)
 
 
-def complete_generated_task(db: Session, user_id: int, task_id: int, status: TaskStatus) -> GeneratedDailyTask | None:
+def complete_generated_task(db: Session, user_id: int, task_id: int, status: TaskStatus, minutes_spent: int = 0, notes: str | None = None) -> GeneratedDailyTask | None:
     task = db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.id == task_id, GeneratedDailyTask.user_id == user_id))
     if not task:
         return None
     task.status = status
     task.completed_at = datetime.utcnow() if status == TaskStatus.COMPLETED else None
     db.add(task)
+    db.add(GeneratedTaskLog(user_id=user_id, task_id=task.id, status=status, minutes_spent=minutes_spent, notes=notes))
     event = db.scalar(select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.generated_task_id == task.id))
     if event:
         event.completed = status == TaskStatus.COMPLETED
@@ -403,8 +451,41 @@ def update_productivity_log(db: Session, user_id: int, target_date: date) -> Pro
     return log
 
 
+def comeback_mode_summary(db: Session, user_id: int, target_date: date | None = None) -> dict:
+    target_date = planner_date(target_date)
+    overdue = db.scalar(
+        select(func.count(GeneratedDailyTask.id)).where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date < target_date,
+            GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
+        )
+    ) or 0
+    topics = db.scalars(select(SyllabusTopic).join(SyllabusSubject).join(Exam).where(Exam.active.is_(True))).all()
+    high_backlog = [topic for topic in topics if topic.progress_percent < 55 or topic.weak_score >= 65]
+    active = overdue >= 5 or len(high_backlog) >= 8
+    priority_topics = sorted(high_backlog, key=lambda topic: (-topic.subject.weight, -topic.weak_score, topic.progress_percent, -topic.difficulty))[:8]
+    return {
+        "active": active,
+        "date": target_date.isoformat(),
+        "backlog_tasks": overdue,
+        "weak_topic_count": len(high_backlog),
+        "daily_score_warning": overdue >= 5,
+        "recovery_plan": [
+            {
+                "topic_id": topic.id,
+                "topic": topic.name,
+                "progress": round(topic.progress_percent, 1),
+                "weak_score": round(topic.weak_score, 1),
+                "action": "Revision plus one focused practice block",
+            }
+            for topic in priority_topics
+        ],
+        "warning": "Backlog is high. Keep tasks shorter and finish weak/high-weightage topics first." if active else None,
+    }
+
+
 def build_live_dashboard(db: Session, user_id: int) -> dict:
-    today = date.today()
+    today = planner_date()
     tasks = generate_daily_tasks(db, user_id, today)
     update_productivity_log(db, user_id, today)
     db.commit()
@@ -416,7 +497,7 @@ def build_live_dashboard(db: Session, user_id: int) -> dict:
             CalendarEvent.start_at <= datetime.combine(today, time.max),
         ).order_by(CalendarEvent.start_at)
     ).all()
-    exams = db.scalars(select(Exam).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics))).all()
+    exams = db.scalars(select(Exam).where(Exam.active.is_(True)).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics))).all()
     exam_readiness = []
     weak_topics = []
     next_exam = None
@@ -455,12 +536,13 @@ def build_live_dashboard(db: Session, user_id: int) -> dict:
         "productivity_score": log.productivity_score if log else 0,
         "habit_completion_rate": round(len(habit_logs) / max(len(habits), 1) * 100, 1),
         "daily_checkin": checkin.productivity_score if checkin else None,
-        "travel_mode": get_travel_settings(db, user_id).enabled,
+        "travel_mode": travel_mode_active(get_travel_settings(db, user_id), today),
+        "comeback_mode": comeback_mode_summary(db, user_id, today),
     }
 
 
 def build_realtime_dashboard(db: Session, user_id: int, metrics_db: Session | None = None) -> dict:
-    today = date.today()
+    today = planner_date()
     week_days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
     generate_daily_tasks(db, user_id, today)
     for day in week_days:
@@ -615,7 +697,7 @@ def _discipline_score(completed: int, total: int, focus_minutes: int, sleep_hour
 
 
 def _realtime_exam_cards(db: Session, today: date) -> tuple[list[dict], list[dict]]:
-    exams = db.scalars(select(Exam).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics))).all()
+    exams = db.scalars(select(Exam).where(Exam.active.is_(True)).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics))).all()
     cards = []
     weak_topics = []
     for exam in exams:
@@ -751,7 +833,7 @@ def build_life_os_weekly_review(db: Session, user_id: int, week_end: date | None
 
 
 def build_life_os_notifications(db: Session, user_id: int) -> list[dict]:
-    today = date.today()
+    today = planner_date()
     dashboard = build_live_dashboard(db, user_id)
     notifications: list[dict] = []
     overdue = dashboard["overdue_count"]
@@ -816,7 +898,7 @@ def build_life_os_notifications(db: Session, user_id: int) -> list[dict]:
 
 
 def build_life_os_analytics(db: Session, user_id: int) -> dict:
-    today = date.today()
+    today = planner_date()
     build_live_dashboard(db, user_id)
     logs = []
     for offset in range(6, -1, -1):
@@ -846,15 +928,25 @@ def build_life_os_analytics(db: Session, user_id: int) -> dict:
 def build_life_os_settings(db: Session, user_id: int) -> dict:
     ensure_exam_catalog(db, user_id)
     plans = db.scalars(select(StudyPlan).where(StudyPlan.user_id == user_id)).all()
-    exams = {exam.id: exam.name for exam in db.scalars(select(Exam)).all()}
+    exams = {exam.id: exam.name for exam in db.scalars(select(Exam).where(Exam.active.is_(True))).all()}
     travel = get_travel_settings(db, user_id)
     return {
         "selected_exams": [
-            {"exam_id": plan.exam_id, "exam_name": exams.get(plan.exam_id, "Exam"), "active": plan.active, "available_hours_per_day": plan.available_hours_per_day}
+            {
+                "exam_id": plan.exam_id,
+                "exam_name": exams.get(plan.exam_id, "Exam"),
+                "active": plan.active,
+                "available_hours_per_day": plan.available_hours_per_day,
+                "priority": plan.priority,
+                "start_date": plan.start_date.isoformat(),
+                "end_date": plan.end_date.isoformat(),
+            }
             for plan in plans
         ],
         "travel_mode": {
             "enabled": travel.enabled,
+            "start_date": travel.start_date.isoformat() if travel.start_date else None,
+            "end_date": travel.end_date.isoformat() if travel.end_date else None,
             "allow_mock_tests": travel.allow_mock_tests,
             "daily_minutes": travel.daily_minutes,
             "notes": travel.notes,
@@ -869,7 +961,7 @@ def build_life_os_settings(db: Session, user_id: int) -> dict:
 
 
 def build_monitoring_overview(db: Session, user_id: int) -> dict:
-    today = date.today()
+    today = planner_date()
     dashboard = build_live_dashboard(db, user_id)
     goals = db.scalars(select(Goal).where(Goal.user_id == user_id)).all()
     milestones = db.scalars(select(Milestone).join(Goal).where(Goal.user_id == user_id)).all()
@@ -905,7 +997,7 @@ def build_monitoring_overview(db: Session, user_id: int) -> dict:
 
 
 def build_monitoring_daily(db: Session, user_id: int, target_date: date | None = None) -> dict:
-    target_date = target_date or date.today()
+    target_date = planner_date(target_date)
     tasks = generate_daily_tasks(db, user_id, target_date)
     update_productivity_log(db, user_id, target_date)
     db.commit()
@@ -925,7 +1017,7 @@ def build_monitoring_daily(db: Session, user_id: int, target_date: date | None =
 
 
 def build_monitoring_weekly(db: Session, user_id: int, week_end: date | None = None) -> dict:
-    week_end = week_end or date.today()
+    week_end = planner_date(week_end)
     week_start = week_end - timedelta(days=6)
     days = [build_monitoring_daily(db, user_id, week_start + timedelta(days=offset)) for offset in range(7)]
     return {
@@ -939,10 +1031,12 @@ def build_monitoring_weekly(db: Session, user_id: int, week_end: date | None = N
     }
 
 
-def _task_mix(days_left: int, travel_enabled: bool, allow_mock_tests: bool) -> list[StudyTaskType]:
+def _task_mix(days_left: int, travel_enabled: bool, allow_mock_tests: bool, comeback_active: bool) -> list[StudyTaskType]:
     if travel_enabled:
         mix = [StudyTaskType.REVISION, StudyTaskType.FORMULA_REVIEW, StudyTaskType.READING]
         return mix + ([StudyTaskType.MOCK] if allow_mock_tests and days_left < 30 else [])
+    if comeback_active:
+        return [StudyTaskType.REVISION, StudyTaskType.PRACTICE, StudyTaskType.PYQ, StudyTaskType.ANALYSIS]
     if days_left < 21:
         return [StudyTaskType.MOCK, StudyTaskType.ANALYSIS, StudyTaskType.PYQ, StudyTaskType.REVISION]
     if days_left < 60:
@@ -964,15 +1058,19 @@ def _task_title(exam: Exam, topic: SyllabusTopic, task_type: StudyTaskType) -> s
     return f"{exam.name}: {labels[task_type]} - {topic.name}"
 
 
-def _task_minutes(task_type: StudyTaskType, travel_enabled: bool) -> int:
+def _task_minutes(task_type: StudyTaskType, travel_enabled: bool, comeback_active: bool) -> int:
     if travel_enabled:
         return 25 if task_type != StudyTaskType.MOCK else 60
+    if comeback_active:
+        return {StudyTaskType.PYQ: 45, StudyTaskType.PRACTICE: 45, StudyTaskType.ANALYSIS: 30}.get(task_type, 35)
     return {StudyTaskType.MOCK: 120, StudyTaskType.ANALYSIS: 45, StudyTaskType.PYQ: 60, StudyTaskType.PRACTICE: 60}.get(task_type, 45)
 
 
-def _task_reason(days_left: int, topic: SyllabusTopic, travel_enabled: bool) -> str:
+def _task_reason(days_left: int, topic: SyllabusTopic, travel_enabled: bool, comeback_active: bool) -> str:
     if travel_enabled:
         return "Travel mode is on, so this is a lightweight task."
+    if comeback_active:
+        return f"Comeback mode is active: prioritizing weak/high-backlog topic {topic.name}."
     if days_left < 45:
         return f"Exam is near and {topic.name} still needs reinforcement."
     return f"Selected because progress is {topic.progress_percent:.0f}% and weak score is {topic.weak_score:.0f}."

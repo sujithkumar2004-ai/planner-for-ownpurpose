@@ -522,7 +522,10 @@ class StudyPlan(Base):
     exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     available_hours_per_day: Mapped[float] = mapped_column(Float, default=4.0)
+    priority: Mapped[int] = mapped_column(Integer, default=3)
     revision_intensity: Mapped[float] = mapped_column(Float, default=1.0)
+    start_date: Mapped[date] = mapped_column(Date, default=lambda: date(2026, 6, 1))
+    end_date: Mapped[date] = mapped_column(Date, default=lambda: date(2027, 6, 1))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("user_id", "exam_id", name="uq_user_exam_study_plan"),)
@@ -571,10 +574,38 @@ class TravelModeSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     allow_mock_tests: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_minutes: Mapped[int] = mapped_column(Integer, default=90)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MockScore(Base):
+    __tablename__ = "mock_scores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    taken_on: Mapped[date] = mapped_column(Date, index=True)
+    score: Mapped[float] = mapped_column(Float)
+    max_score: Mapped[float] = mapped_column(Float, default=100.0)
+    analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weak_topics: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GeneratedTaskLog(Base):
+    __tablename__ = "generated_task_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("generated_daily_tasks.id", ondelete="CASCADE"), index=True)
+    status: Mapped[TaskStatus] = mapped_column(SAEnum(TaskStatus))
+    minutes_spent: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    logged_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class ProductivityLog(Base):

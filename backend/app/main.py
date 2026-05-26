@@ -24,6 +24,7 @@ from app.life_os import (
     build_monitoring_overview,
     build_monitoring_weekly,
     complete_generated_task,
+    comeback_mode_summary,
     ensure_exam_catalog,
     generate_daily_tasks,
     get_travel_settings,
@@ -31,7 +32,7 @@ from app.life_os import (
     task_payload,
     update_productivity_log,
 )
-from app.models import CalendarEvent, DailyTask, DistractionLog, Exam, ExamDate, ExamDateStatus, ExamTopic, ExamTrack, GeneratedDailyTask, GymLog, GymRoutine, MockTest, Notification, Project, SleepLog, StudyPlan, SyllabusSubject, TaskCategory, TaskLog, TravelBreak, TravelModeSettings, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
+from app.models import CalendarEvent, DailyTask, DistractionLog, Exam, ExamDate, ExamDateStatus, ExamTopic, ExamTrack, GeneratedDailyTask, GymLog, GymRoutine, MockScore, MockTest, Notification, Project, SleepLog, StudyPlan, SyllabusSubject, SyllabusTopic, TaskCategory, TaskLog, TravelBreak, TravelModeSettings, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
 from app.schemas import (
     BackendExamOut,
     CalendarEventCreate,
@@ -55,6 +56,7 @@ from app.schemas import (
     GymRoutineOut,
     LoginRequest,
     MockTestCreate,
+    MockScoreCreate,
     NotificationOut,
     SleepLogCreate,
     TaskCreate,
@@ -62,6 +64,7 @@ from app.schemas import (
     Token,
     TravelModeOut,
     TravelModeUpdate,
+    SyllabusTopicUpdate,
     StudyPlanCreate,
     TravelBreakCreate,
     UserCreate,
@@ -176,7 +179,7 @@ def daily_plan(date: date | None = None, current_user: User = Depends(get_curren
 @app.get("/exams/catalog", response_model=list[BackendExamOut])
 def exams_catalog(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[Exam]:
     ensure_exam_catalog(life_db, current_user.id)
-    return life_db.scalars(select(Exam).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)).order_by(Exam.id)).all()
+    return life_db.scalars(select(Exam).where(Exam.active.is_(True)).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)).order_by(Exam.id)).all()
 
 
 @app.post("/exams/refresh-dates")
@@ -206,23 +209,39 @@ def override_exam_date(exam_id: int, payload: ExamDateOverride, current_user: Us
 def study_plans(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
     ensure_exam_catalog(life_db, current_user.id)
     plans = life_db.scalars(select(StudyPlan).where(StudyPlan.user_id == current_user.id)).all()
-    exams_by_id = {exam.id: exam for exam in life_db.scalars(select(Exam)).all()}
-    return [{"id": plan.id, "exam_id": plan.exam_id, "exam_name": exams_by_id[plan.exam_id].name, "active": plan.active, "available_hours_per_day": plan.available_hours_per_day} for plan in plans if plan.exam_id in exams_by_id]
+    exams_by_id = {exam.id: exam for exam in life_db.scalars(select(Exam).where(Exam.active.is_(True))).all()}
+    return [
+        {
+            "id": plan.id,
+            "exam_id": plan.exam_id,
+            "exam_name": exams_by_id[plan.exam_id].name,
+            "active": plan.active,
+            "available_hours_per_day": plan.available_hours_per_day,
+            "priority": plan.priority,
+            "start_date": plan.start_date.isoformat(),
+            "end_date": plan.end_date.isoformat(),
+        }
+        for plan in plans
+        if plan.exam_id in exams_by_id
+    ]
 
 
 @app.post("/study-plans")
 def upsert_study_plan(payload: StudyPlanCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
     ensure_exam_catalog(life_db, current_user.id)
-    exam = life_db.scalar(select(Exam).where(Exam.id == payload.exam_id))
+    exam = life_db.scalar(select(Exam).where(Exam.id == payload.exam_id, Exam.active.is_(True)))
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     plan = life_db.scalar(select(StudyPlan).where(StudyPlan.user_id == current_user.id, StudyPlan.exam_id == payload.exam_id)) or StudyPlan(user_id=current_user.id, exam_id=payload.exam_id)
     plan.active = payload.active
     plan.available_hours_per_day = payload.available_hours_per_day
+    plan.priority = payload.priority
+    plan.start_date = payload.start_date
+    plan.end_date = payload.end_date
     life_db.add(plan)
     life_db.commit()
     life_db.refresh(plan)
-    return {"id": plan.id, "exam_id": plan.exam_id, "active": plan.active, "available_hours_per_day": plan.available_hours_per_day}
+    return {"id": plan.id, "exam_id": plan.exam_id, "active": plan.active, "available_hours_per_day": plan.available_hours_per_day, "priority": plan.priority, "start_date": plan.start_date.isoformat(), "end_date": plan.end_date.isoformat()}
 
 
 @app.get("/generated-daily-tasks", response_model=list[GeneratedTaskOut])
@@ -237,7 +256,7 @@ def regenerate_tasks(date: date | None = None, force: bool = False, current_user
 
 @app.patch("/generated-daily-tasks/{task_id}", response_model=GeneratedTaskOut)
 def update_generated_task(task_id: int, payload: GeneratedTaskUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
-    task = complete_generated_task(life_db, current_user.id, task_id, payload.status)
+    task = complete_generated_task(life_db, current_user.id, task_id, payload.status, payload.minutes_spent, payload.notes)
     if not task:
         raise HTTPException(status_code=404, detail="Generated task not found")
     return task_payload(life_db, task)
@@ -296,8 +315,12 @@ def travel_mode(current_user: User = Depends(get_current_user), life_db: Session
 
 @app.patch("/travel-mode", response_model=TravelModeOut)
 def update_travel_mode(payload: TravelModeUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> TravelModeSettings:
+    if payload.enabled and payload.start_date and payload.end_date and payload.end_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="Travel end date must be on or after start date")
     settings = get_travel_settings(life_db, current_user.id)
     settings.enabled = payload.enabled
+    settings.start_date = payload.start_date
+    settings.end_date = payload.end_date
     settings.allow_mock_tests = payload.allow_mock_tests
     settings.daily_minutes = payload.daily_minutes
     settings.notes = payload.notes
@@ -306,6 +329,47 @@ def update_travel_mode(payload: TravelModeUpdate, current_user: User = Depends(g
     life_db.refresh(settings)
     generate_daily_tasks(life_db, current_user.id, date.today(), force=True)
     return settings
+
+
+@app.patch("/syllabus-topics/{topic_id}")
+def update_syllabus_topic(topic_id: int, payload: SyllabusTopicUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    ensure_exam_catalog(life_db, current_user.id)
+    topic = life_db.scalar(select(SyllabusTopic).where(SyllabusTopic.id == topic_id))
+    if not topic:
+        raise HTTPException(status_code=404, detail="Syllabus topic not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(topic, field, value)
+    life_db.commit()
+    life_db.refresh(topic)
+    return {"id": topic.id, "progress_percent": topic.progress_percent, "weak_score": topic.weak_score}
+
+
+@app.get("/comeback-mode")
+def comeback_mode(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    ensure_exam_catalog(life_db, current_user.id)
+    return comeback_mode_summary(life_db, current_user.id, date)
+
+
+@app.post("/mock-scores", status_code=status.HTTP_201_CREATED)
+def create_mock_score(payload: MockScoreCreate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    ensure_exam_catalog(life_db, current_user.id)
+    if not life_db.scalar(select(Exam).where(Exam.id == payload.exam_id, Exam.active.is_(True))):
+        raise HTTPException(status_code=404, detail="Exam not found")
+    mock = MockScore(user_id=current_user.id, **payload.model_dump())
+    life_db.add(mock)
+    life_db.commit()
+    life_db.refresh(mock)
+    return {"id": mock.id}
+
+
+@app.get("/mock-scores")
+def mock_scores(exam_id: int | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    stmt = select(MockScore).where(MockScore.user_id == current_user.id)
+    if exam_id:
+        stmt = stmt.where(MockScore.exam_id == exam_id)
+    rows = life_db.scalars(stmt.order_by(MockScore.taken_on.desc(), MockScore.id.desc())).all()
+    exams = {exam.id: exam.name for exam in life_db.scalars(select(Exam).where(Exam.active.is_(True))).all()}
+    return [{"id": row.id, "exam_id": row.exam_id, "exam_name": exams.get(row.exam_id), "taken_on": row.taken_on.isoformat(), "score": row.score, "max_score": row.max_score, "analysis": row.analysis, "weak_topics": row.weak_topics} for row in rows]
 
 
 @app.post("/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
