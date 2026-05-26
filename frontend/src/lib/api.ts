@@ -1,7 +1,27 @@
 const API_BASE = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
   (process.env.NODE_ENV === "production" ? "https://planner-for-ownpurpose-production.up.railway.app" : "http://127.0.0.1:8000")
 ).replace(/\/+$/, "");
+
+const TOKEN_KEY = "finalplanner_token";
+
+export class ApiError extends Error {
+  status: number;
+  body: string;
+
+  constructor(status: number, body: string) {
+    super(body || `Request failed with status ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function clearInvalidSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(TOKEN_KEY);
+  window.dispatchEvent(new Event("finalplanner_auth_invalid"));
+}
 
 export function apiUrl(path: string) {
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
@@ -46,7 +66,7 @@ export type Dashboard = {
 };
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("finalplanner_token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
   const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
@@ -57,7 +77,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     cache: "no-store"
   });
   if (!res.ok) {
-    throw new Error(await res.text());
+    const body = await res.text();
+    if ((res.status === 401 || res.status === 403) && path !== "/auth/login") {
+      clearInvalidSession();
+    }
+    throw new ApiError(res.status, body);
   }
   return res.json() as Promise<T>;
 }

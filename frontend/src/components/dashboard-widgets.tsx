@@ -33,7 +33,7 @@ import {
   YAxis
 } from "recharts";
 
-import { apiFetch, type RealtimeDashboard, type RealtimeTask } from "@/lib/api";
+import { ApiError, apiFetch, type RealtimeDashboard, type RealtimeTask } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/progress-ring";
@@ -74,7 +74,11 @@ export function DashboardWidgets() {
       setLoadError(null);
       setLastUpdated(new Date());
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Dashboard failed to load");
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setLoadError("Your session expired. Redirecting to login...");
+      } else {
+        setLoadError("Dashboard failed to load. Please refresh or sign in again.");
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -118,7 +122,7 @@ export function DashboardWidgets() {
   if (!data) {
     return (
       <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-100">
-        Dashboard API error: {loadError}
+        {loadError}
       </div>
     );
   }
@@ -138,7 +142,7 @@ export function DashboardWidgets() {
 
       {loadError && (
         <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
-          Keeping the last dashboard snapshot. Latest refresh failed: {loadError}
+          {loadError}
         </div>
       )}
 

@@ -12,6 +12,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const checkAuth = () => {
       const token = localStorage.getItem("finalplanner_token");
       if (!token && !pathname.startsWith("/login")) {
+        setIsAuthenticated(false);
         router.push("/login");
       } else {
         setIsAuthenticated(true);
@@ -19,6 +20,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     checkAuth();
+    const handleInvalidAuth = () => {
+      setIsAuthenticated(false);
+      if (!pathname.startsWith("/login")) {
+        router.replace("/login");
+      }
+    };
+    window.addEventListener("finalplanner_auth_invalid", handleInvalidAuth);
+    return () => window.removeEventListener("finalplanner_auth_invalid", handleInvalidAuth);
   }, [pathname, router]);
 
   if (!isAuthenticated && !pathname.startsWith("/login")) {
