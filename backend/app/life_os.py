@@ -233,16 +233,12 @@ def ensure_exam_catalog(db: Session, user_id: int | None = None) -> None:
 
 
 def get_travel_settings(db: Session, user_id: int) -> TravelModeSettings:
-    global _travel_settings_cache
-    if user_id in _travel_settings_cache:
-        return _travel_settings_cache[user_id]
     settings = db.scalar(select(TravelModeSettings).where(TravelModeSettings.user_id == user_id))
     if not settings:
         settings = TravelModeSettings(user_id=user_id)
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    _travel_settings_cache[user_id] = settings
     return settings
 
 
@@ -341,19 +337,14 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
 
     travel = get_travel_settings(db, user_id)
     in_travel = travel_mode_active(travel, target_date)
-    global _study_plans_cache
-    if user_id in _study_plans_cache:
-        plans = _study_plans_cache[user_id]
-    else:
-        plans = db.scalars(
-            select(StudyPlan).where(
-                StudyPlan.user_id == user_id,
-                StudyPlan.active.is_(True),
-                StudyPlan.start_date <= target_date,
-                StudyPlan.end_date >= target_date,
-            )
-        ).all()
-        _study_plans_cache[user_id] = plans
+    plans = db.scalars(
+        select(StudyPlan).where(
+            StudyPlan.user_id == user_id,
+            StudyPlan.active.is_(True),
+            StudyPlan.start_date <= target_date,
+            StudyPlan.end_date >= target_date,
+        )
+    ).all()
     available_minutes = travel.daily_minutes if in_travel else int(sum(plan.available_hours_per_day * plan.priority for plan in plans) * 60 / max(sum(plan.priority for plan in plans), 1))
     available_minutes = max(45, min(available_minutes, 360))
 
@@ -370,13 +361,8 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
     ) or 0
-    global _exam_cache
     for plan in plans:
-        if plan.exam_id in _exam_cache:
-            exam = _exam_cache[plan.exam_id]
-        else:
-            exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
-            _exam_cache[plan.exam_id] = exam
+        exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
         if not exam:
             continue
         exam_date = min((d.exam_date for d in exam.dates), default=target_date + timedelta(days=180))
@@ -589,16 +575,13 @@ def comeback_mode_summary(db: Session, user_id: int, target_date: date | None = 
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
     ) or 0
-    global _active_syllabus_topics_cache
-    if _active_syllabus_topics_cache is None:
-        _active_syllabus_topics_cache = db.scalars(
-            select(SyllabusTopic)
-            .join(SyllabusSubject)
-            .join(Exam)
-            .where(Exam.active.is_(True))
-            .options(selectinload(SyllabusTopic.subject))
-        ).all()
-    topics = _active_syllabus_topics_cache
+    topics = db.scalars(
+        select(SyllabusTopic)
+        .join(SyllabusSubject)
+        .join(Exam)
+        .where(Exam.active.is_(True))
+        .options(selectinload(SyllabusTopic.subject))
+    ).all()
     high_backlog = [topic for topic in topics if topic.progress_percent < 55 or topic.weak_score >= 65]
     recent_days = [target_date - timedelta(days=offset) for offset in range(0, 7)]
     recent_scores = [_accountability_score_for_day(db, user_id, day) for day in recent_days]
