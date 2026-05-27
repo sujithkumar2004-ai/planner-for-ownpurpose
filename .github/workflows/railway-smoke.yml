@@ -5,9 +5,14 @@ on:
   schedule:
     - cron: "*/30 * * * *"
 
+concurrency:
+  group: production-smoke
+  cancel-in-progress: true
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Production smoke
@@ -15,3 +20,5 @@ jobs:
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          SMOKE_RETRIES: "6"
+          SMOKE_RETRY_DELAY_SECONDS: "5"

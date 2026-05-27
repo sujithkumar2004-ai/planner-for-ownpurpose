@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { apiFetch, GeneratedTask, TaskStatus, TravelMode } from "@/lib/api";
-import { Check, Clock, Play, MoreVertical, CheckCircle2, Loader2, Plane, RefreshCw } from "lucide-react";
+import { Check, Clock, Play, MoreVertical, CheckCircle2, Loader2, Plane, RefreshCw, LockKeyhole } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,7 @@ function defaultPlannerDate() {
 export default function DailyPlannerPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedDate, setSelectedDate] = useState(defaultPlannerDate);
+  const plannerWaiting = new Date().toISOString().split("T")[0] < PLANNER_START;
 
   const { data: tasks, error, mutate } = useSWR<GeneratedTask[]>(`/generated-daily-tasks?date=${selectedDate}`, apiFetch);
   const { data: travelMode, mutate: mutateTravel } = useSWR<TravelMode>("/travel-mode", apiFetch);
@@ -68,6 +69,7 @@ export default function DailyPlannerPage() {
   };
 
   const regenerate = async (force = false) => {
+    if (plannerWaiting) return;
     setIsSubmitting(true);
     try {
       await apiFetch(`/generated-daily-tasks/generate?date=${selectedDate}&force=${force}`, {
@@ -82,6 +84,7 @@ export default function DailyPlannerPage() {
   };
 
   const toggleTravelMode = async () => {
+    if (plannerWaiting) return;
     const enabled = !travelMode?.enabled;
     await apiFetch("/travel-mode", {
       method: "PATCH",
@@ -121,6 +124,7 @@ export default function DailyPlannerPage() {
         />
         <button
           onClick={toggleTravelMode}
+          disabled={plannerWaiting}
           className={cn("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border", travelMode?.enabled ? "bg-sky-500/20 text-sky-200 border-sky-400/30" : "bg-white/10 hover:bg-white/15 text-white border-white/5")}
         >
           <Plane className="h-4 w-4" />
@@ -128,12 +132,23 @@ export default function DailyPlannerPage() {
         </button>
         <button 
           onClick={() => regenerate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg text-sm font-medium transition-colors border border-white/5"
+          disabled={plannerWaiting || isSubmitting}
+          className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors border border-white/5"
         >
           <RefreshCw className="h-4 w-4" />
           Regenerate
         </button>
       </div>
+
+      {plannerWaiting && (
+        <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-5 text-sm text-cyan-50">
+          <div className="flex items-center gap-2 font-semibold">
+            <LockKeyhole className="h-4 w-4" />
+            Waiting for June 1 start
+          </div>
+          <p className="mt-2 text-xs text-cyan-100/85">Daily execution is locked until 2026-06-01. No tasks, carry-forward items, or backlog are created before the start date.</p>
+        </div>
+      )}
 
       {travelMode?.enabled && (
         <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-4 text-sm text-sky-100">
@@ -234,13 +249,15 @@ export default function DailyPlannerPage() {
         
         {tasks.length === 0 && (
           <div className="text-center py-12 px-4 rounded-3xl border border-dashed border-white/10 bg-white/5">
-            <p className="text-zinc-500 mb-4">No generated tasks for today.</p>
-            <button 
-              onClick={() => regenerate(false)}
-              className="text-purple-400 font-medium hover:text-purple-300 transition-colors"
-            >
-              Generate today&apos;s plan
-            </button>
+            <p className="text-zinc-500 mb-4">{plannerWaiting ? "Planner is waiting. The first plan unlocks on June 1." : "No generated tasks for today."}</p>
+            {!plannerWaiting && (
+              <button 
+                onClick={() => regenerate(false)}
+                className="text-purple-400 font-medium hover:text-purple-300 transition-colors"
+              >
+                Generate today&apos;s plan
+              </button>
+            )}
           </div>
         )}
 

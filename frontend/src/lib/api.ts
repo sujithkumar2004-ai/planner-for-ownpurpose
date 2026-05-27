@@ -130,6 +130,7 @@ export type Habit = {
 };
 
 export type LiveDashboard = {
+  planner_status?: PlannerStatus;
   today_tasks: GeneratedTask[];
   completed_count: number;
   pending_count: number;
@@ -170,6 +171,7 @@ export type RealtimeDashboard = {
     date: string;
     planner_start_date: string;
     planner_end_date: string;
+    planner_status?: PlannerStatus;
     discipline_score: number;
     completed_tasks: number;
     total_tasks: number;
@@ -218,10 +220,16 @@ export type RealtimeDashboard = {
   planner_window?: {
     planner_start_date: string;
     planner_end_date: string;
+    status?: string;
+    locked?: boolean;
+    days_until_start?: number;
+    message?: string;
     expected_days: number;
     first_planner_day: string | null;
     last_planner_day: string | null;
     distinct_days: number;
+    total_tasks?: number;
+    pre_start_task_count?: number;
     missing_day_count: number;
     duplicate_task_keys: number;
     valid: boolean;
@@ -238,6 +246,15 @@ export type RealtimeDashboard = {
     suggested_missed_reason: string;
     tomorrow_intensity: string;
   };
+};
+
+export type PlannerStatus = {
+  status: "waiting" | "active";
+  locked: boolean;
+  today: string;
+  planner_start_date: string;
+  days_until_start: number;
+  message: string;
 };
 
 export type GeneratedTask = {

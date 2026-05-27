@@ -38,6 +38,7 @@ from app.life_os import (
     task_payload,
     update_productivity_log,
     verify_planner_window,
+    PLANNER_START,
 )
 from app.models import CalendarEvent, DailyTask, DistractionLog, Exam, ExamDate, ExamDateStatus, ExamTopic, ExamTrack, GeneratedDailyTask, GymLog, GymRoutine, MockScore, MockTest, Notification, Project, SleepLog, StudyPlan, SyllabusSubject, SyllabusTopic, TaskCategory, TaskLog, TravelBreak, TravelModeSettings, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
 from app.schemas import (
@@ -174,6 +175,8 @@ def dashboard(current_user: User = Depends(get_current_user), db: Session = Depe
 @app.get("/daily-plan", response_model=list[TaskOut])
 def daily_plan(date: date | None = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[DailyTask]:
     target_date = date or __import__("datetime").date.today()
+    if target_date < PLANNER_START:
+        return []
     tasks = db.scalars(select(DailyTask).where(DailyTask.user_id == current_user.id, DailyTask.task_date == target_date).order_by(DailyTask.start_time)).all()
     if not tasks:
         for title, category, start_time, end_time in FIXED_SCHEDULE:

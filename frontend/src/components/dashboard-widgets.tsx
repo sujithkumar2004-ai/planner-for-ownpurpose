@@ -114,6 +114,8 @@ export function DashboardWidgets() {
 
   const weakTopics = useMemo(() => data?.exams.flatMap((exam) => exam.weak_topics.map((topic) => ({ ...topic, exam: exam.name }))).slice(0, 8) ?? [], [data]);
   const todayCompletion = data ? Math.round((data.today.completed_tasks / Math.max(data.today.total_tasks, 1)) * 100) : 0;
+  const plannerLocked = Boolean(data?.planner_window?.locked || data?.today.planner_status?.locked);
+  const plannerMessage = data?.planner_window?.message ?? data?.today.planner_status?.message;
 
   if (loading && !data) {
     return <DashboardSkeleton />;
@@ -146,14 +148,21 @@ export function DashboardWidgets() {
         </div>
       )}
 
+      {plannerLocked && (
+        <div className="rounded-lg border border-cyan-400/25 bg-cyan-400/10 p-5 text-sm text-cyan-50">
+          <p className="font-semibold">Waiting for June 1 start</p>
+          <p className="mt-1 text-xs text-cyan-100/85">{plannerMessage}</p>
+        </div>
+      )}
+
       <section className="grid gap-3 md:grid-cols-[1fr_auto]">
-        <div className={cn("rounded-lg border p-4 text-sm", data.today.checkin_completed ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100" : "border-red-400/30 bg-red-500/10 text-red-100")}>
-          <p className="font-semibold">{data.today.checkin_completed ? "Daily check-in complete" : "Daily check-in required"}</p>
-          <p className="mt-1 text-xs opacity-85">Wake, sleep, study hours, gym, distractions, mood, win, and failure feed tomorrow&apos;s plan.</p>
+        <div className={cn("rounded-lg border p-4 text-sm", plannerLocked || data.today.checkin_completed ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100" : "border-red-400/30 bg-red-500/10 text-red-100")}>
+          <p className="font-semibold">{plannerLocked ? "Check-in locked until start" : data.today.checkin_completed ? "Daily check-in complete" : "Daily check-in required"}</p>
+          <p className="mt-1 text-xs opacity-85">{plannerLocked ? "No score penalty or backlog is created before June 1." : "Wake, sleep, study hours, gym, distractions, mood, win, and failure feed tomorrow's plan."}</p>
         </div>
         <div className={cn("rounded-lg border p-4 text-sm", data.planner_window?.valid ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
-          <p className="font-semibold">Planner window</p>
-          <p className="mt-1 text-xs">{data.planner_window?.first_planner_day ?? data.today.planner_start_date} to {data.planner_window?.last_planner_day ?? data.today.planner_end_date}</p>
+          <p className="font-semibold">{plannerLocked ? "Planner waiting" : "Planner window"}</p>
+          <p className="mt-1 text-xs">{plannerLocked ? `${data.planner_window?.days_until_start ?? 0} day(s) until ${data.today.planner_start_date}` : `${data.planner_window?.first_planner_day ?? data.today.planner_start_date} to ${data.planner_window?.last_planner_day ?? data.today.planner_end_date}`}</p>
         </div>
       </section>
 

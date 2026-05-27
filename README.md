@@ -185,6 +185,8 @@ AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-
 scripts/verify-celery-config.sh
 ```
 
+`verify-production-smoke.sh` retries transient DNS/network failures, checks backend health, validates the frontend app shell, manifest, PWA icon, and confirms backend CORS allows the configured `FRONTEND_URL`. Tune with `SMOKE_RETRIES`, `SMOKE_RETRY_DELAY_SECONDS`, `SMOKE_CONNECT_TIMEOUT_SECONDS`, `SMOKE_MAX_TIME_SECONDS`, or set `CHECK_CORS=0` only when intentionally testing an isolated backend.
+
 `verify-railway-env.sh` is expected to fail against `.env.railway.example` until every placeholder value is replaced with real Supabase, Upstash, Resend, Sentry, JWT, and Vercel values.
 
 ## Backups

@@ -34,6 +34,8 @@ AUTH_TOKEN=<jwt> BACKEND_URL=https://your-backend.up.railway.app scripts/verify-
 scripts/verify-celery-config.sh
 ```
 
+The production smoke script retries transient network and DNS failures before failing. It validates `/health`, frontend HTML, `/manifest.json`, `/icon.svg`, and backend CORS for the configured `FRONTEND_URL`. Leave CORS checking enabled for production; use `CHECK_CORS=0` only for isolated backend checks.
+
 Confirm Celery worker and beat are running in Railway service logs. Beat must show the daily 11:30 PM task and Sunday 9 PM task loaded from `app.celery_app`.
 
 ## Database: Supabase

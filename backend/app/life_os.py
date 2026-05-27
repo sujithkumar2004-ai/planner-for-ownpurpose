@@ -164,6 +164,25 @@ _study_plans_cache = {}
 _bulk_reset_mode = False
 
 
+def planner_not_started(today: date | None = None) -> bool:
+    return (today or date.today()) < PLANNER_START
+
+
+def waiting_for_planner_start(today: date | None = None) -> dict:
+    current = today or date.today()
+    days_left = max((PLANNER_START - current).days, 0)
+    return {
+        "status": "waiting" if days_left else "active",
+        "locked": days_left > 0,
+        "today": current.isoformat(),
+        "planner_start_date": PLANNER_START.isoformat(),
+        "days_until_start": days_left,
+        "message": f"Planner is locked until {PLANNER_START.isoformat()}. No daily tasks or backlog are created before the start date."
+        if days_left
+        else "Planner is active.",
+    }
+
+
 def clear_life_os_caches() -> None:
     global _active_syllabus_topics_cache, _travel_settings_cache, _catalog_ensured_users, _exam_cache, _study_plans_cache, _bulk_reset_mode
     _active_syllabus_topics_cache = None
@@ -316,6 +335,8 @@ def _extract_date_for_exam(code: str, html: str) -> date | None:
 
 def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = None, force: bool = False) -> list[GeneratedDailyTask]:
     ensure_exam_catalog(db, user_id)
+    if planner_not_started():
+        return []
     target_date = target_date or planner_date()
     if target_date < PLANNER_START or target_date > PLANNER_END:
         return []
@@ -357,6 +378,7 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
     overdue_count = db.scalar(
         select(func.count(GeneratedDailyTask.id)).where(
             GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
             GeneratedDailyTask.task_date < target_date,
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
@@ -473,9 +495,12 @@ def _learning_task_candidates(db: Session, user_id: int, target_date: date, exis
 
 
 def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, travel_enabled: bool) -> None:
+    if target_date <= PLANNER_START:
+        return
     missed = db.scalars(
         select(GeneratedDailyTask).where(
             GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
             GeneratedDailyTask.task_date < target_date,
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         ).order_by(GeneratedDailyTask.task_date, GeneratedDailyTask.priority.desc()).limit(3)
@@ -547,7 +572,14 @@ def update_productivity_log(db: Session, user_id: int, target_date: date) -> Pro
     tasks = db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date)).all()
     completed = sum(1 for task in tasks if task.status == TaskStatus.COMPLETED)
     pending = sum(1 for task in tasks if task.status in {TaskStatus.PENDING, TaskStatus.ACTIVE})
-    overdue = db.scalar(select(func.count(GeneratedDailyTask.id)).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date < target_date, GeneratedDailyTask.status != TaskStatus.COMPLETED)) or 0
+    overdue = db.scalar(
+        select(func.count(GeneratedDailyTask.id)).where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
+            GeneratedDailyTask.task_date < target_date,
+            GeneratedDailyTask.status != TaskStatus.COMPLETED,
+        )
+    ) or 0
     focus_minutes = db.scalar(
         select(func.coalesce(func.sum(FocusSession.duration_minutes), 0)).where(
             FocusSession.user_id == user_id,
@@ -567,10 +599,26 @@ def update_productivity_log(db: Session, user_id: int, target_date: date) -> Pro
 
 
 def comeback_mode_summary(db: Session, user_id: int, target_date: date | None = None) -> dict:
+    if planner_not_started(target_date):
+        waiting = waiting_for_planner_start(target_date)
+        return {
+            "active": False,
+            "date": waiting["today"],
+            "backlog_tasks": 0,
+            "weak_topic_count": 0,
+            "daily_score_warning": False,
+            "bad_days": 0,
+            "missed_checkins": 0,
+            "mock_score_drop": False,
+            "seven_day_protocol": [],
+            "recovery_plan": [],
+            "warning": waiting["message"],
+        }
     target_date = planner_date(target_date)
     overdue = db.scalar(
         select(func.count(GeneratedDailyTask.id)).where(
             GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
             GeneratedDailyTask.task_date < target_date,
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
@@ -648,7 +696,125 @@ def _mock_score_drop(db: Session, user_id: int) -> bool:
     return latest < previous - 0.05
 
 
+def _waiting_live_dashboard(db: Session, user_id: int) -> dict:
+    ensure_exam_catalog(db, user_id)
+    waiting = waiting_for_planner_start()
+    exams, weak_topics = _realtime_exam_cards(db, PLANNER_START)
+    next_exam = None
+    if exams:
+        nearest = min(exams, key=lambda exam: exam["days_left"])
+        next_exam = {"name": nearest["name"], "exam_date": nearest["exam_date"], "days_left": nearest["days_left"]}
+    planner_window = verify_planner_window(db, user_id)
+    return {
+        "planner_start_date": PLANNER_START.isoformat(),
+        "planner_end_date": PLANNER_END.isoformat(),
+        "planner_status": waiting,
+        "today_tasks": [],
+        "completed_count": 0,
+        "pending_count": 0,
+        "overdue_count": 0,
+        "active_task": None,
+        "current_streak": 0,
+        "exam_readiness": [
+            {
+                "exam_id": exam["id"],
+                "name": exam["name"],
+                "exam_date": exam["exam_date"],
+                "days_left": exam["days_left"],
+                "syllabus_completion": exam["syllabus_completion"],
+                "readiness_score": exam["readiness_score"],
+            }
+            for exam in exams
+        ],
+        "syllabus_completion": round(sum(exam["syllabus_completion"] for exam in exams) / max(len(exams), 1), 1),
+        "focus_minutes_today": 0,
+        "focus_minutes_week": 0,
+        "calendar_events_today": [],
+        "next_exam_countdown": next_exam,
+        "weak_topics": weak_topics[:8],
+        "recommended_next_action": waiting["message"],
+        "productivity_score": 0,
+        "habit_completion_rate": 0,
+        "daily_checkin": None,
+        "daily_checkin_completed": True,
+        "accountability_warnings": [waiting["message"]],
+        "travel_mode": False,
+        "comeback_mode": comeback_mode_summary(db, user_id, date.fromisoformat(waiting["today"])),
+        "planner_window": planner_window,
+    }
+
+
+def _waiting_realtime_dashboard(db: Session, user_id: int) -> dict:
+    ensure_exam_catalog(db, user_id)
+    waiting = waiting_for_planner_start()
+    current = date.fromisoformat(waiting["today"])
+    week_days = [current - timedelta(days=offset) for offset in range(6, -1, -1)]
+    exams, weak_topics = _realtime_exam_cards(db, PLANNER_START)
+    planner_window = verify_planner_window(db, user_id)
+    empty_week = [
+        {
+            "date": day.isoformat(),
+            "score": 0,
+            "completed": 0,
+            "total": 0,
+            "completion": 0,
+            "study_minutes": 0,
+            "focus_minutes": 0,
+            "sleep_hours": 0,
+            "distraction_minutes": 0,
+            "checkin_completed": True,
+        }
+        for day in week_days
+    ]
+    return {
+        "today": {
+            "date": current.isoformat(),
+            "planner_start_date": PLANNER_START.isoformat(),
+            "planner_end_date": PLANNER_END.isoformat(),
+            "planner_status": waiting,
+            "discipline_score": 0,
+            "completed_tasks": 0,
+            "total_tasks": 0,
+            "focus_minutes": 0,
+            "gym_done": False,
+            "sleep_hours": 0,
+            "distraction_minutes": 0,
+            "checkin_completed": True,
+            "warnings": [waiting["message"]],
+        },
+        "weekly": {
+            "average_score": 0,
+            "study_minutes": [{"date": day["date"], "minutes": 0} for day in empty_week],
+            "task_completion": [{"date": day["date"], "completion": 0, "completed": 0, "total": 0} for day in empty_week],
+            "focus_minutes": [{"date": day["date"], "minutes": 0} for day in empty_week],
+            "sleep_hours": [{"date": day["date"], "hours": 0, "score": 0} for day in empty_week],
+            "distraction_minutes": [{"date": day["date"], "minutes": 0, "score": 0} for day in empty_week],
+        },
+        "exams": exams,
+        "tasks": {"today": [], "overdue": [], "upcoming": []},
+        "streak": {
+            "current": 0,
+            "best": 0,
+            "calendar": [{"date": day["date"], "score": 0, "completed": False} for day in empty_week],
+        },
+        "recommendations": [waiting["message"]],
+        "comeback": comeback_mode_summary(db, user_id, current),
+        "planner_window": planner_window,
+        "exam_war_room": build_exam_war_room(db, user_id),
+        "learning": build_learning_roadmaps(db, user_id),
+        "monthly_reality_check": build_monthly_reality_check(db, user_id, current),
+        "accountability_coach": {
+            "mode": "waiting",
+            "questions": [],
+            "suggested_missed_reason": "planner_locked_until_start",
+            "tomorrow_intensity": "waiting",
+        },
+    }
+
+
 def build_live_dashboard(db: Session, user_id: int) -> dict:
+    if planner_not_started():
+        return _waiting_live_dashboard(db, user_id)
     today = planner_date()
     tasks = generate_daily_tasks(db, user_id, today)
     update_productivity_log(db, user_id, today)
@@ -712,6 +878,8 @@ def build_live_dashboard(db: Session, user_id: int) -> dict:
 
 
 def build_realtime_dashboard(db: Session, user_id: int, metrics_db: Session | None = None) -> dict:
+    if planner_not_started():
+        return _waiting_realtime_dashboard(db, user_id)
     today = planner_date()
     week_days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
     generate_daily_tasks(db, user_id, today)
@@ -728,6 +896,7 @@ def build_realtime_dashboard(db: Session, user_id: int, metrics_db: Session | No
         select(GeneratedDailyTask)
         .where(
             GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
             GeneratedDailyTask.task_date < today,
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
@@ -1031,6 +1200,19 @@ def _best_streak(db: Session, user_id: int, today: date) -> int:
 
 
 def build_life_os_weekly_review(db: Session, user_id: int, week_end: date | None = None) -> dict:
+    if planner_not_started(week_end):
+        waiting = waiting_for_planner_start(week_end)
+        return {
+            "week_start": waiting["today"],
+            "week_end": waiting["today"],
+            "summary": waiting["message"],
+            "completed_tasks": 0,
+            "missed_tasks": 0,
+            "completion_rate": 0,
+            "weak_topics": [],
+            "next_week_plan": [],
+            "recommended_action": waiting["message"],
+        }
     week_end = week_end or date.today()
     week_start = week_end - timedelta(days=6)
     tasks = db.scalars(
@@ -1041,7 +1223,7 @@ def build_life_os_weekly_review(db: Session, user_id: int, week_end: date | None
         )
     ).all()
     completed = [task for task in tasks if task.status == TaskStatus.COMPLETED]
-    missed = [task for task in tasks if task.status in {TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE, TaskStatus.SKIPPED} and task.task_date < date.today()]
+    missed = [task for task in tasks if task.status in {TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE, TaskStatus.SKIPPED} and PLANNER_START <= task.task_date < date.today()]
     dashboard = build_live_dashboard(db, user_id)
     weak_topics = dashboard["weak_topics"][:5]
     next_week_plan = []
@@ -1070,6 +1252,18 @@ def build_life_os_weekly_review(db: Session, user_id: int, week_end: date | None
 
 
 def build_life_os_notifications(db: Session, user_id: int) -> list[dict]:
+    if planner_not_started():
+        waiting = waiting_for_planner_start()
+        return [
+            {
+                "id": "planner_waiting",
+                "type": "planner_waiting",
+                "title": "Planner locked",
+                "body": waiting["message"],
+                "level": "GREEN",
+                "created_at": datetime.utcnow().isoformat(),
+            }
+        ]
     today = planner_date()
     dashboard = build_live_dashboard(db, user_id)
     notifications: list[dict] = []
@@ -1356,10 +1550,22 @@ def build_monthly_reality_check(db: Session, user_id: int, target_date: date | N
 
 
 def build_accountability_coach(db: Session, user_id: int, target_date: date | None = None) -> dict:
+    if planner_not_started(target_date):
+        return {
+            "mode": "waiting",
+            "questions": [],
+            "suggested_missed_reason": "planner_locked_until_start",
+            "tomorrow_intensity": "waiting",
+        }
     today = planner_date(target_date)
     overdue = db.scalars(
         select(GeneratedDailyTask)
-        .where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date < today, GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE, TaskStatus.SKIPPED]))
+        .where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
+            GeneratedDailyTask.task_date < today,
+            GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE, TaskStatus.SKIPPED]),
+        )
         .order_by(GeneratedDailyTask.task_date.desc(), GeneratedDailyTask.priority.desc())
         .limit(5)
     ).all()
@@ -1413,11 +1619,29 @@ def apply_emergency_mode(db: Session, user_id: int, target_date: date | None = N
 
 
 def run_daily_accountability_cycle(db: Session, user_id: int, run_date: date | None = None) -> dict:
+    if planner_not_started(run_date):
+        waiting = waiting_for_planner_start(run_date)
+        return {
+            "today": waiting["today"],
+            "tomorrow": PLANNER_START.isoformat(),
+            "missed_checkin": False,
+            "unfinished_marked_overdue": 0,
+            "missed_reason": "planner_locked_until_start",
+            "tomorrow_tasks": 0,
+            "message": waiting["message"],
+        }
     today = planner_date(run_date)
     tomorrow = next_planner_date(today)
     checkin = _daily_checkin_for_day(db, user_id, today)
     missed_checkin = not _checkin_completed(checkin, today)
-    unfinished = db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date <= today, GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE]))).all()
+    unfinished = db.scalars(
+        select(GeneratedDailyTask).where(
+            GeneratedDailyTask.user_id == user_id,
+            GeneratedDailyTask.task_date >= PLANNER_START,
+            GeneratedDailyTask.task_date <= today,
+            GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE]),
+        )
+    ).all()
     reason = _suggest_missed_reason(db, user_id, today)
     for task in unfinished:
         task.status = TaskStatus.OVERDUE
@@ -1441,6 +1665,7 @@ def verify_planner_window(db: Session, user_id: int) -> dict:
     last_day = db.scalar(select(func.max(GeneratedDailyTask.task_date)).where(GeneratedDailyTask.user_id == user_id))
     distinct_days = db.scalar(select(func.count(func.distinct(GeneratedDailyTask.task_date))).where(GeneratedDailyTask.user_id == user_id)) or 0
     total_tasks = db.scalar(select(func.count(GeneratedDailyTask.id)).where(GeneratedDailyTask.user_id == user_id)) or 0
+    pre_start_tasks = db.scalar(select(func.count(GeneratedDailyTask.id)).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date < PLANNER_START)) or 0
     duplicate_rows = db.execute(
         select(GeneratedDailyTask.task_date, GeneratedDailyTask.title, GeneratedDailyTask.task_type, func.count(GeneratedDailyTask.id))
         .where(GeneratedDailyTask.user_id == user_id)
@@ -1448,17 +1673,25 @@ def verify_planner_window(db: Session, user_id: int) -> dict:
         .having(func.count(GeneratedDailyTask.id) > 1)
         .limit(5)
     ).all()
+    waiting = waiting_for_planner_start()
+    active_valid = first_day == PLANNER_START and last_day == PLANNER_END and distinct_days == PLANNER_TOTAL_DAYS and not duplicate_rows and pre_start_tasks == 0
+    waiting_valid = waiting["locked"] and pre_start_tasks == 0
     return {
         "planner_start_date": PLANNER_START.isoformat(),
         "planner_end_date": PLANNER_END.isoformat(),
+        "status": waiting["status"],
+        "locked": waiting["locked"],
+        "days_until_start": waiting["days_until_start"],
+        "message": waiting["message"],
         "expected_days": PLANNER_TOTAL_DAYS,
         "first_planner_day": first_day.isoformat() if first_day else None,
         "last_planner_day": last_day.isoformat() if last_day else None,
         "distinct_days": distinct_days,
         "total_tasks": total_tasks,
+        "pre_start_task_count": pre_start_tasks,
         "missing_day_count": max(PLANNER_TOTAL_DAYS - distinct_days, 0),
         "duplicate_task_keys": len(duplicate_rows),
-        "valid": first_day == PLANNER_START and last_day == PLANNER_END and distinct_days == PLANNER_TOTAL_DAYS and not duplicate_rows,
+        "valid": waiting_valid or active_valid,
     }
 
 
