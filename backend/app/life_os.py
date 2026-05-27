@@ -35,6 +35,13 @@ from app.models import (
     TaskStatus,
     TravelModeSettings,
 )
+from app.planner_engine import (
+    ExamPlanningInput,
+    TopicPlanningInput,
+    calculate_backlog_pressure,
+    calculate_daily_capacity,
+    generate_dynamic_day_plan,
+)
 
 PLANNER_START = date(2026, 6, 1)
 PLANNER_END = date(2027, 6, 1)
@@ -284,6 +291,14 @@ def travel_mode_active(settings: TravelModeSettings, target_date: date) -> bool:
     return True
 
 
+def _weighted_available_hours(plans: list[StudyPlan]) -> float:
+    if not plans:
+        return 2.0
+    weighted_hours = sum(plan.available_hours_per_day * max(plan.priority, 1) for plan in plans)
+    total_priority = sum(max(plan.priority, 1) for plan in plans)
+    return max(0.75, weighted_hours / max(total_priority, 1))
+
+
 def refresh_exam_dates(db: Session) -> list[ExamDate]:
     ensure_exam_catalog(db)
     refreshed: list[ExamDate] = []
@@ -366,15 +381,8 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
             StudyPlan.end_date >= target_date,
         )
     ).all()
-    available_minutes = travel.daily_minutes if in_travel else int(sum(plan.available_hours_per_day * plan.priority for plan in plans) * 60 / max(sum(plan.priority for plan in plans), 1))
-    available_minutes = max(45, min(available_minutes, 360))
-
     comeback = comeback_mode_summary(db, user_id, target_date)
-    carry_forward_missed_tasks(db, user_id, target_date, in_travel)
-    created: list[GeneratedDailyTask] = []
-    per_task_minutes = 30 if in_travel else 45 if comeback["active"] else 55
-    max_tasks = max(2, available_minutes // per_task_minutes)
-    candidate_blocks = []
+    available_hours = _weighted_available_hours(plans)
     overdue_count = db.scalar(
         select(func.count(GeneratedDailyTask.id)).where(
             GeneratedDailyTask.user_id == user_id,
@@ -383,64 +391,93 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
     ) or 0
+    dynamic_exam_inputs: list[ExamPlanningInput] = []
+    exams_by_id: dict[int, Exam] = {}
+    topics_by_id: dict[int, SyllabusTopic] = {}
     for plan in plans:
         exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
         if not exam:
             continue
+        exams_by_id[exam.id] = exam
         exam_date = min((d.exam_date for d in exam.dates), default=target_date + timedelta(days=180))
-        days_left = max((exam_date - target_date).days, 0)
-        pending_topics = sorted(
-            [topic for subject in exam.subjects for topic in subject.topics if topic.progress_percent < 100],
-            key=lambda topic: (topic.progress_percent, -topic.weak_score, -topic.subject.weight, -topic.difficulty, topic.id),
-        )
-        if not pending_topics:
-            continue
-        task_types = _task_mix(days_left, in_travel, travel.allow_mock_tests, comeback["active"])
-        for topic in pending_topics[:6]:
-            urgency = max(0, 120 - days_left) / 12
-            weak_topic_weight = topic.weak_score / 10
-            low_completion_weight = max(0, 100 - topic.progress_percent) / 20
-            subject_weight = topic.subject.weight * 1.5
-            overdue_penalty = min(overdue_count, 5)
-            priority_score = urgency + weak_topic_weight + low_completion_weight + subject_weight + overdue_penalty + topic.difficulty + plan.priority * 2
-            candidate_blocks.append((priority_score, exam, exam_date, days_left, topic, task_types))
-
-    candidate_blocks.sort(key=lambda item: item[0], reverse=True)
-    for priority_score, exam, _exam_date, days_left, topic, task_types in candidate_blocks:
-        for task_type in task_types[: max(1, max_tasks // max(len(plans), 1))]:
-            title = _task_title(exam, topic, task_type)
-            if _bulk_reset_mode:
-                if any(t.title == title and t.task_type == task_type for t in created):
+        topic_inputs = []
+        for subject in exam.subjects:
+            for topic in subject.topics:
+                if topic.progress_percent >= 100:
                     continue
-            else:
-                if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title, GeneratedDailyTask.task_type == task_type)):
-                    continue
-            task = GeneratedDailyTask(
-                user_id=user_id,
+                topics_by_id[topic.id] = topic
+                topic_inputs.append(
+                    TopicPlanningInput(
+                        topic_id=topic.id,
+                        progress_percent=topic.progress_percent,
+                        weak_score=topic.weak_score,
+                        difficulty=topic.difficulty,
+                        estimated_hours=topic.estimated_hours,
+                        subject_weight=subject.weight,
+                    )
+                )
+        dynamic_exam_inputs.append(
+            ExamPlanningInput(
                 exam_id=exam.id,
-                topic_id=topic.id,
-                task_date=target_date,
-                title=title,
-                task_type=task_type,
-                estimated_minutes=_task_minutes(task_type, in_travel, comeback["active"]),
-                priority=max(1, min(10, round(priority_score))),
-                generated_reason=_task_reason(days_left, topic, in_travel, comeback["active"]),
+                priority=plan.priority,
+                exam_date=exam_date,
+                topics=topic_inputs,
             )
-            db.add(task)
-            try:
-                db.flush()
-            except IntegrityError:
-                db.rollback()
-                return db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date).order_by(GeneratedDailyTask.priority.desc(), GeneratedDailyTask.id)).all()
-            created.append(task)
-            _ensure_calendar_event_for_task(db, user_id, task, len(created))
-            if len(created) >= max_tasks:
-                break
-        if len(created) >= max_tasks:
-            break
+        )
+
+    dynamic_specs = generate_dynamic_day_plan(
+        target_date=target_date,
+        exams=dynamic_exam_inputs,
+        available_study_hours=available_hours,
+        travel_mode=in_travel,
+        comeback_mode=comeback["active"],
+        backlog_tasks=overdue_count,
+        travel_daily_minutes=travel.daily_minutes,
+    )
+    daily_capacity = calculate_daily_capacity(available_hours, travel_mode=in_travel, comeback_mode=comeback["active"], travel_daily_minutes=travel.daily_minutes)
+    backlog_extra_minutes = calculate_backlog_pressure(overdue_count, daily_capacity)
+    carry_forward_missed_tasks(db, user_id, target_date, in_travel, max_extra_minutes=backlog_extra_minutes)
+    created: list[GeneratedDailyTask] = []
+    max_minutes = sum(spec.estimated_minutes for spec in dynamic_specs)
+    if not max_minutes:
+        max_minutes = 90 if in_travel else 160 if comeback["active"] else 220
+    used_minutes = 0
+    for spec in dynamic_specs:
+        exam = exams_by_id.get(spec.exam_id)
+        topic = topics_by_id.get(spec.topic_id)
+        if not exam or not topic:
+            continue
+        task_type = StudyTaskType(spec.task_type)
+        title = _task_title(exam, topic, task_type)
+        if _bulk_reset_mode:
+            if any(t.title == title and t.task_type == task_type for t in created):
+                continue
+        else:
+            if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title, GeneratedDailyTask.task_type == task_type)):
+                continue
+        task = GeneratedDailyTask(
+            user_id=user_id,
+            exam_id=exam.id,
+            topic_id=topic.id,
+            task_date=target_date,
+            title=title,
+            task_type=task_type,
+            estimated_minutes=spec.estimated_minutes,
+            priority=max(1, min(10, round(spec.priority_score / 20))),
+            generated_reason=spec.priority_reason,
+        )
+        db.add(task)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            return db.scalars(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date).order_by(GeneratedDailyTask.priority.desc(), GeneratedDailyTask.id)).all()
+        created.append(task)
+        used_minutes += spec.estimated_minutes
+        _ensure_calendar_event_for_task(db, user_id, task, len(created))
 
     for learning_task in _learning_task_candidates(db, user_id, target_date, len(created)):
-        if len(created) >= max_tasks:
+        if used_minutes + learning_task["minutes"] > max_minutes:
             break
         if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == learning_task["title"], GeneratedDailyTask.task_type == learning_task["task_type"])):
             continue
@@ -456,6 +493,7 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
         db.add(task)
         db.flush()
         created.append(task)
+        used_minutes += learning_task["minutes"]
         _ensure_calendar_event_for_task(db, user_id, task, len(created))
 
     if not created:
@@ -494,7 +532,7 @@ def _learning_task_candidates(db: Session, user_id: int, target_date: date, exis
     return candidates
 
 
-def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, travel_enabled: bool) -> None:
+def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, travel_enabled: bool, max_extra_minutes: int | None = None) -> None:
     if target_date <= PLANNER_START:
         return
     missed = db.scalars(
@@ -505,6 +543,7 @@ def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, tra
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         ).order_by(GeneratedDailyTask.task_date, GeneratedDailyTask.priority.desc()).limit(3)
     ).all()
+    carried_minutes = 0
     for old_task in missed:
         old_task.status = TaskStatus.OVERDUE
         db.add(old_task)
@@ -516,6 +555,8 @@ def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, tra
             task_type = old_task.task_type
             title = f"Carry-forward: {old_task.title}"
             minutes = min(old_task.estimated_minutes, 45)
+        if max_extra_minutes is not None and carried_minutes + minutes > max_extra_minutes:
+            continue
         is_duplicate = False
         if _bulk_reset_mode:
             for obj in db.new:
@@ -540,6 +581,7 @@ def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, tra
             )
             db.add(carried)
             db.flush()
+            carried_minutes += minutes
             _ensure_calendar_event_for_task(db, user_id, carried, 1)
 
 
