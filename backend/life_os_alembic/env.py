@@ -48,7 +48,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         include_name=include_name,
         literal_binds=True,
-        version_table="alembic_version_life_os",
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -61,7 +60,6 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             include_name=include_name,
-            version_table="alembic_version_life_os",
         )
         with context.begin_transaction():
             context.run_migrations()
