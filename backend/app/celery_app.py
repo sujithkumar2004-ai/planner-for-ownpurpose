@@ -31,4 +31,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.refresh_exam_dates",
         "schedule": crontab(hour=5, minute=30),
     },
+    "daily-accountability-regeneration-midnight": {
+        "task": "app.tasks.run_daily_accountability_regeneration",
+        "schedule": crontab(hour=0, minute=5),
+    },
 }

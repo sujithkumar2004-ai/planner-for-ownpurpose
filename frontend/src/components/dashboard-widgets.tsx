@@ -146,6 +146,17 @@ export function DashboardWidgets() {
         </div>
       )}
 
+      <section className="grid gap-3 md:grid-cols-[1fr_auto]">
+        <div className={cn("rounded-lg border p-4 text-sm", data.today.checkin_completed ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100" : "border-red-400/30 bg-red-500/10 text-red-100")}>
+          <p className="font-semibold">{data.today.checkin_completed ? "Daily check-in complete" : "Daily check-in required"}</p>
+          <p className="mt-1 text-xs opacity-85">Wake, sleep, study hours, gym, distractions, mood, win, and failure feed tomorrow&apos;s plan.</p>
+        </div>
+        <div className={cn("rounded-lg border p-4 text-sm", data.planner_window?.valid ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-100" : "border-amber-400/30 bg-amber-400/10 text-amber-100")}>
+          <p className="font-semibold">Planner window</p>
+          <p className="mt-1 text-xs">{data.planner_window?.first_planner_day ?? data.today.planner_start_date} to {data.planner_window?.last_planner_day ?? data.today.planner_end_date}</p>
+        </div>
+      </section>
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <motion.div variants={itemVars}>
           <MetricCard title="Discipline Score" icon={ShieldCheck}>
@@ -184,6 +195,27 @@ export function DashboardWidgets() {
                 <span key={day.date} title={`${day.date}: ${day.score}`} className={cn("h-7 flex-1 rounded", day.completed ? "bg-emerald-400/80" : "bg-white/10")} />
               ))}
             </div>
+          </MetricCard>
+        </motion.div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <motion.div variants={itemVars}>
+          <MetricCard title="Comeback Mode" icon={AlertCircle}>
+            <p className="text-2xl font-bold text-white">{data.comeback?.active ? "Active" : "Clear"}</p>
+            <p className="mt-1 text-sm text-zinc-400">{data.comeback?.bad_days ?? 0} bad days · {data.comeback?.missed_checkins ?? 0} missed check-ins</p>
+          </MetricCard>
+        </motion.div>
+        <motion.div variants={itemVars}>
+          <MetricCard title="Reality Check" icon={Target}>
+            <p className="text-2xl font-bold text-white">{data.monthly_reality_check?.exam_readiness ?? 0}%</p>
+            <p className="mt-1 text-sm text-zinc-400">{data.monthly_reality_check?.projected_rank_readiness ?? "unknown"} · backlog {data.monthly_reality_check?.backlog_danger ?? "unknown"}</p>
+          </MetricCard>
+        </motion.div>
+        <motion.div variants={itemVars}>
+          <MetricCard title="Coach Mode" icon={ShieldCheck}>
+            <p className="text-2xl font-bold text-white">{data.accountability_coach?.tomorrow_intensity ?? "recovery"}</p>
+            <p className="mt-1 text-sm text-zinc-400">reason: {data.accountability_coach?.suggested_missed_reason ?? "check-in"}</p>
           </MetricCard>
         </motion.div>
       </section>

@@ -276,18 +276,34 @@ class HabitLogCreate(BaseModel):
 
 class DailyCheckInCreate(BaseModel):
     log_date: date
+    wake_up_time: str | None = None
+    sleep_time: str | None = None
+    study_hours_completed: float = 0.0
+    gym_completed: bool = False
+    distraction_minutes: int = 0
     mood_score: int | None = None
+    energy_score: int | None = None
     focus_score: int | None = None
     productivity_score: int | None = None
+    todays_win: str | None = None
+    todays_failure: str | None = None
     notes: str | None = None
 
 
 class DailyCheckInOut(BaseModel):
     id: int
     log_date: date
+    wake_up_time: str | None
+    sleep_time: str | None
+    study_hours_completed: float
+    gym_completed: bool
+    distraction_minutes: int
     mood_score: int | None
+    energy_score: int | None
     focus_score: int | None
     productivity_score: int | None
+    todays_win: str | None
+    todays_failure: str | None
     notes: str | None
 
     model_config = {"from_attributes": True}

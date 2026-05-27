@@ -23,14 +23,21 @@ from app.life_os import (
     build_monitoring_daily,
     build_monitoring_overview,
     build_monitoring_weekly,
+    apply_emergency_mode,
+    build_accountability_coach,
+    build_exam_war_room,
+    build_learning_roadmaps,
+    build_monthly_reality_check,
     complete_generated_task,
     comeback_mode_summary,
     ensure_exam_catalog,
     generate_daily_tasks,
     get_travel_settings,
     refresh_exam_dates,
+    run_daily_accountability_cycle,
     task_payload,
     update_productivity_log,
+    verify_planner_window,
 )
 from app.models import CalendarEvent, DailyTask, DistractionLog, Exam, ExamDate, ExamDateStatus, ExamTopic, ExamTrack, GeneratedDailyTask, GymLog, GymRoutine, MockScore, MockTest, Notification, Project, SleepLog, StudyPlan, SyllabusSubject, SyllabusTopic, TaskCategory, TaskLog, TravelBreak, TravelModeSettings, User, Warning, Goal, Milestone, LifeTask, Habit, HabitLog, DailyCheckIn, FocusSession, GoalStatus, TaskStatus
 from app.schemas import (
@@ -850,6 +857,42 @@ def monitoring_weekly(date: date | None = None, current_user: User = Depends(get
     return build_monitoring_weekly(life_db, current_user.id, date)
 
 
+@app.get("/exam-war-room")
+@app.get("/api/exam-war-room")
+def exam_war_room(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
+    return build_exam_war_room(life_db, current_user.id)
+
+
+@app.get("/learning-roadmaps")
+@app.get("/api/learning-roadmaps")
+def learning_roadmaps(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_learning_roadmaps(life_db, current_user.id)
+
+
+@app.get("/monthly-reality-check")
+@app.get("/api/monthly-reality-check")
+def monthly_reality_check(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_monthly_reality_check(life_db, current_user.id, date)
+
+
+@app.get("/accountability-coach")
+@app.get("/api/accountability-coach")
+def accountability_coach(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return build_accountability_coach(life_db, current_user.id, date)
+
+
+@app.post("/emergency-mode/bad-day")
+@app.post("/api/emergency-mode/bad-day")
+def bad_day_mode(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return apply_emergency_mode(life_db, current_user.id, date)
+
+
+@app.post("/accountability/regenerate-tomorrow")
+@app.post("/api/accountability/regenerate-tomorrow")
+def regenerate_tomorrow(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
+    return run_daily_accountability_cycle(life_db, current_user.id, date)
+
+
 @app.get("/api/tasks", response_model=list[GeneratedTaskOut])
 def api_tasks(date: date | None = None, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> list[dict]:
     return generated_tasks(date, current_user, life_db)
@@ -1024,3 +1067,16 @@ def admin_reset_planner_status(
             detail="Job not found"
         )
     return job
+
+
+@app.get("/admin/planner-window/verify")
+def admin_planner_window_verify(
+    current_user: User = Depends(get_current_user),
+    life_db: Session = Depends(get_life_os_db),
+) -> dict:
+    if current_user.email != settings.admin_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Admin access required"
+        )
+    return verify_planner_window(life_db, current_user.id)

@@ -16,7 +16,7 @@ from app.models import (
     GeneratedDailyTask, GeneratedTaskLog, CalendarEvent,
     MockTest, SyllabusTopic, StudyPlan
 )
-from app.life_os import ensure_exam_catalog, generate_daily_tasks
+from app.life_os import ensure_exam_catalog, generate_daily_tasks, verify_planner_window
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,8 @@ def reset_planner_data(db: Session, life_db: Session, admin_email: str) -> dict:
         "deleted_counts": {},
         "updated_counts": {},
         "skipped_tables": SKIPPED_SAFE_FILTER_TARGETS.copy(),
-        "regenerated_users": []
+        "regenerated_users": [],
+        "planner_window": {}
     }
 
     try:
@@ -209,12 +210,18 @@ def reset_planner_data(db: Session, life_db: Session, admin_email: str) -> dict:
                 generate_daily_tasks(life_db, user.id, current_date, force=False)
                 current_date += timedelta(days=1)
                 days_count += 1
+            verification = verify_planner_window(life_db, user.id)
 
             results["regenerated_users"].append({
                 "user_id": user.id,
                 "email": user.email,
-                "days_generated": days_count
+                "days_generated": days_count,
+                "first_planner_day": verification["first_planner_day"],
+                "last_planner_day": verification["last_planner_day"],
+                "distinct_days": verification["distinct_days"],
+                "valid_window": verification["valid"],
             })
+            results["planner_window"][str(user.id)] = verification
 
     except Exception as e:
         db.rollback()

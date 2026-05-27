@@ -168,6 +168,8 @@ export type RealtimeTask = {
 export type RealtimeDashboard = {
   today: {
     date: string;
+    planner_start_date: string;
+    planner_end_date: string;
     discipline_score: number;
     completed_tasks: number;
     total_tasks: number;
@@ -175,6 +177,7 @@ export type RealtimeDashboard = {
     gym_done: boolean;
     sleep_hours: number;
     distraction_minutes: number;
+    checkin_completed: boolean;
     warnings: string[];
   };
   weekly: {
@@ -205,6 +208,36 @@ export type RealtimeDashboard = {
     calendar: Array<{ date: string; score: number; completed: boolean }>;
   };
   recommendations: string[];
+  comeback?: {
+    active: boolean;
+    bad_days: number;
+    missed_checkins: number;
+    seven_day_protocol: string[];
+    warning: string | null;
+  };
+  planner_window?: {
+    planner_start_date: string;
+    planner_end_date: string;
+    expected_days: number;
+    first_planner_day: string | null;
+    last_planner_day: string | null;
+    distinct_days: number;
+    missing_day_count: number;
+    duplicate_task_keys: number;
+    valid: boolean;
+  };
+  monthly_reality_check?: {
+    exam_readiness: number;
+    pace_enough: boolean;
+    projected_rank_readiness: string;
+    backlog_danger: string;
+  };
+  accountability_coach?: {
+    mode: string;
+    questions: string[];
+    suggested_missed_reason: string;
+    tomorrow_intensity: string;
+  };
 };
 
 export type GeneratedTask = {
