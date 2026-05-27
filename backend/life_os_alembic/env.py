@@ -48,6 +48,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         include_name=include_name,
         literal_binds=True,
+        version_table="alembic_version_life_os",
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -56,7 +57,12 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, include_name=include_name)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_name=include_name,
+            version_table="alembic_version_life_os",
+        )
         with context.begin_transaction():
             context.run_migrations()
 

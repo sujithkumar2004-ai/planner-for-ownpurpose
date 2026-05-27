@@ -119,7 +119,27 @@ EXAM_CATALOG = {
 }
 
 
+_catalog_ensured_users = set()
+_active_syllabus_topics_cache = None
+_travel_settings_cache = {}
+_exam_cache = {}
+_study_plans_cache = {}
+_bulk_reset_mode = False
+
+
+def clear_life_os_caches() -> None:
+    global _active_syllabus_topics_cache, _travel_settings_cache, _catalog_ensured_users, _exam_cache, _study_plans_cache, _bulk_reset_mode
+    _active_syllabus_topics_cache = None
+    _travel_settings_cache.clear()
+    _catalog_ensured_users.clear()
+    _exam_cache.clear()
+    _study_plans_cache.clear()
+    _bulk_reset_mode = False
+
+
 def ensure_exam_catalog(db: Session, user_id: int | None = None) -> None:
+    if user_id and user_id in _catalog_ensured_users:
+        return
     for legacy_exam in db.scalars(select(Exam).where(Exam.code.notin_(list(EXAM_CATALOG.keys())))).all():
         legacy_exam.active = False
         db.add(legacy_exam)
@@ -169,15 +189,23 @@ def ensure_exam_catalog(db: Session, user_id: int | None = None) -> None:
     if user_id and not db.scalar(select(TravelModeSettings).where(TravelModeSettings.user_id == user_id)):
         db.add(TravelModeSettings(user_id=user_id))
     db.commit()
+    global _active_syllabus_topics_cache
+    _active_syllabus_topics_cache = None
+    if user_id:
+        _catalog_ensured_users.add(user_id)
 
 
 def get_travel_settings(db: Session, user_id: int) -> TravelModeSettings:
+    global _travel_settings_cache
+    if user_id in _travel_settings_cache:
+        return _travel_settings_cache[user_id]
     settings = db.scalar(select(TravelModeSettings).where(TravelModeSettings.user_id == user_id))
     if not settings:
         settings = TravelModeSettings(user_id=user_id)
         db.add(settings)
         db.commit()
         db.refresh(settings)
+    _travel_settings_cache[user_id] = settings
     return settings
 
 
@@ -272,14 +300,19 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
 
     travel = get_travel_settings(db, user_id)
     in_travel = travel_mode_active(travel, target_date)
-    plans = db.scalars(
-        select(StudyPlan).where(
-            StudyPlan.user_id == user_id,
-            StudyPlan.active.is_(True),
-            StudyPlan.start_date <= target_date,
-            StudyPlan.end_date >= target_date,
-        )
-    ).all()
+    global _study_plans_cache
+    if user_id in _study_plans_cache:
+        plans = _study_plans_cache[user_id]
+    else:
+        plans = db.scalars(
+            select(StudyPlan).where(
+                StudyPlan.user_id == user_id,
+                StudyPlan.active.is_(True),
+                StudyPlan.start_date <= target_date,
+                StudyPlan.end_date >= target_date,
+            )
+        ).all()
+        _study_plans_cache[user_id] = plans
     available_minutes = travel.daily_minutes if in_travel else int(sum(plan.available_hours_per_day * plan.priority for plan in plans) * 60 / max(sum(plan.priority for plan in plans), 1))
     available_minutes = max(45, min(available_minutes, 360))
 
@@ -296,8 +329,13 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
     ) or 0
+    global _exam_cache
     for plan in plans:
-        exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
+        if plan.exam_id in _exam_cache:
+            exam = _exam_cache[plan.exam_id]
+        else:
+            exam = db.scalar(select(Exam).where(Exam.id == plan.exam_id).options(selectinload(Exam.dates), selectinload(Exam.subjects).selectinload(SyllabusSubject.topics)))
+            _exam_cache[plan.exam_id] = exam
         if not exam:
             continue
         exam_date = min((d.exam_date for d in exam.dates), default=target_date + timedelta(days=180))
@@ -322,8 +360,12 @@ def generate_daily_tasks(db: Session, user_id: int, target_date: date | None = N
     for priority_score, exam, _exam_date, days_left, topic, task_types in candidate_blocks:
         for task_type in task_types[: max(1, max_tasks // max(len(plans), 1))]:
             title = _task_title(exam, topic, task_type)
-            if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title, GeneratedDailyTask.task_type == task_type)):
-                continue
+            if _bulk_reset_mode:
+                if any(t.title == title and t.task_type == task_type for t in created):
+                    continue
+            else:
+                if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title, GeneratedDailyTask.task_type == task_type)):
+                    continue
             task = GeneratedDailyTask(
                 user_id=user_id,
                 exam_id=exam.id,
@@ -385,7 +427,16 @@ def carry_forward_missed_tasks(db: Session, user_id: int, target_date: date, tra
             task_type = old_task.task_type
             title = f"Carry-forward: {old_task.title}"
             minutes = min(old_task.estimated_minutes, 45)
-        if not db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title)):
+        is_duplicate = False
+        if _bulk_reset_mode:
+            for obj in db.new:
+                if isinstance(obj, GeneratedDailyTask) and obj.user_id == user_id and obj.task_date == target_date and obj.title == title:
+                    is_duplicate = True
+                    break
+        else:
+            if db.scalar(select(GeneratedDailyTask).where(GeneratedDailyTask.user_id == user_id, GeneratedDailyTask.task_date == target_date, GeneratedDailyTask.title == title)):
+                is_duplicate = True
+        if not is_duplicate:
             carried = GeneratedDailyTask(
                 user_id=user_id,
                 exam_id=old_task.exam_id,
@@ -460,7 +511,16 @@ def comeback_mode_summary(db: Session, user_id: int, target_date: date | None = 
             GeneratedDailyTask.status.in_([TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.OVERDUE]),
         )
     ) or 0
-    topics = db.scalars(select(SyllabusTopic).join(SyllabusSubject).join(Exam).where(Exam.active.is_(True))).all()
+    global _active_syllabus_topics_cache
+    if _active_syllabus_topics_cache is None:
+        _active_syllabus_topics_cache = db.scalars(
+            select(SyllabusTopic)
+            .join(SyllabusSubject)
+            .join(Exam)
+            .where(Exam.active.is_(True))
+            .options(selectinload(SyllabusTopic.subject))
+        ).all()
+    topics = _active_syllabus_topics_cache
     high_backlog = [topic for topic in topics if topic.progress_percent < 55 or topic.weak_score >= 65]
     active = overdue >= 5 or len(high_backlog) >= 8
     priority_topics = sorted(high_backlog, key=lambda topic: (-topic.subject.weight, -topic.weak_score, topic.progress_percent, -topic.difficulty))[:8]
@@ -1077,8 +1137,9 @@ def _task_reason(days_left: int, topic: SyllabusTopic, travel_enabled: bool, com
 
 
 def _ensure_calendar_event_for_task(db: Session, user_id: int, task: GeneratedDailyTask, order_index: int) -> None:
-    if db.scalar(select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.generated_task_id == task.id)):
-        return
+    if not _bulk_reset_mode:
+        if db.scalar(select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.generated_task_id == task.id)):
+            return
     start_hour = 7 + ((order_index - 1) * 2)
     start_at = datetime.combine(task.task_date, time(hour=min(start_hour, 21), minute=0))
     end_at = start_at + timedelta(minutes=task.estimated_minutes)

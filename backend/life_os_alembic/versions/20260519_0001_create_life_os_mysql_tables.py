@@ -15,6 +15,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("DROP TYPE IF EXISTS goalstatus CASCADE")
+    op.execute("DROP TYPE IF EXISTS examdatestatus CASCADE")
+    op.execute("DROP TYPE IF EXISTS taskstatus CASCADE")
+    op.execute("DROP TYPE IF EXISTS studytasktype CASCADE")
+
     op.create_table(
         "exams",
         sa.Column("id", sa.Integer(), nullable=False),

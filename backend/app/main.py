@@ -3,7 +3,7 @@ import logging
 import os
 
 import sentry_sdk
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -317,18 +317,20 @@ def travel_mode(current_user: User = Depends(get_current_user), life_db: Session
 def update_travel_mode(payload: TravelModeUpdate, current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> TravelModeSettings:
     if payload.enabled and payload.start_date and payload.end_date and payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="Travel end date must be on or after start date")
-    settings = get_travel_settings(life_db, current_user.id)
-    settings.enabled = payload.enabled
-    settings.start_date = payload.start_date
-    settings.end_date = payload.end_date
-    settings.allow_mock_tests = payload.allow_mock_tests
-    settings.daily_minutes = payload.daily_minutes
-    settings.notes = payload.notes
-    life_db.add(settings)
+    settings_travel = get_travel_settings(life_db, current_user.id)
+    settings_travel.enabled = payload.enabled
+    settings_travel.start_date = payload.start_date
+    settings_travel.end_date = payload.end_date
+    settings_travel.allow_mock_tests = payload.allow_mock_tests
+    settings_travel.daily_minutes = payload.daily_minutes
+    settings_travel.notes = payload.notes
+    life_db.add(settings_travel)
     life_db.commit()
-    life_db.refresh(settings)
+    life_db.refresh(settings_travel)
+    from app.life_os import _travel_settings_cache
+    _travel_settings_cache.pop(current_user.id, None)
     generate_daily_tasks(life_db, current_user.id, date.today(), force=True)
-    return settings
+    return settings_travel
 
 
 @app.patch("/syllabus-topics/{topic_id}")
@@ -891,3 +893,134 @@ def api_calendar_events(start: datetime | None = None, end: datetime | None = No
 @app.get("/api/analytics/productivity")
 def api_productivity_analytics(current_user: User = Depends(get_current_user), life_db: Session = Depends(get_life_os_db)) -> dict:
     return build_life_os_analytics(life_db, current_user.id)
+
+
+from pydantic import BaseModel
+
+class ResetPlannerPayload(BaseModel):
+    confirmation_text: str
+
+
+planner_reset_jobs = {}
+
+
+def save_job_status(job_id: str, data: dict):
+    planner_reset_jobs[job_id] = data
+    try:
+        import redis
+        import json
+        r = redis.from_url(settings.redis_url)
+        r.set(f"reset_job:{job_id}", json.dumps(data), ex=86400)
+    except Exception:
+        pass
+
+
+def get_job_status(job_id: str) -> dict | None:
+    try:
+        import redis
+        import json
+        r = redis.from_url(settings.redis_url)
+        data = r.get(f"reset_job:{job_id}")
+        if data:
+            return json.loads(data)
+    except Exception:
+        pass
+    return planner_reset_jobs.get(job_id)
+
+
+def run_reset_job(job_id: str, admin_email: str):
+    try:
+        # Clear caches before starting
+        from app.life_os import clear_life_os_caches
+        clear_life_os_caches()
+
+        # Connect to direct database URLs for bulk reset/regeneration work.
+        direct_url = settings.direct_url or settings.database_url
+        life_direct_url = settings.life_os_direct_url or settings.life_os_database_url
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        engine = create_engine(direct_url, pool_pre_ping=True)
+        life_engine = engine if life_direct_url == direct_url else create_engine(life_direct_url, pool_pre_ping=True)
+        DirectSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+        LifeDirectSession = DirectSession if life_engine is engine else sessionmaker(bind=life_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+        direct_db = DirectSession()
+        life_direct_db = direct_db if life_engine is engine else LifeDirectSession()
+        try:
+            from app.reset_planner import reset_planner_data
+            res = reset_planner_data(direct_db, life_direct_db, admin_email=admin_email)
+            save_job_status(job_id, {
+                "status": "completed",
+                "completed_at": datetime.utcnow().isoformat(),
+                "result": res,
+                "error": None
+            })
+        finally:
+            if life_direct_db is not direct_db:
+                life_direct_db.close()
+            direct_db.close()
+            if life_engine is not engine:
+                life_engine.dispose()
+            engine.dispose()
+    except Exception as exc:
+        logger.exception(f"Background planner reset failed for job {job_id}")
+        save_job_status(job_id, {
+            "status": "failed",
+            "completed_at": datetime.utcnow().isoformat(),
+            "result": None,
+            "error": str(exc)
+        })
+
+
+@app.post("/admin/reset-planner")
+def admin_reset_planner(
+    payload: ResetPlannerPayload,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    if current_user.email != settings.admin_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Admin access required"
+        )
+    if os.getenv("RESET_PLANNER_CONFIRM") != "true":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RESET_PLANNER_CONFIRM environment variable must be set to 'true'"
+        )
+    from app.reset_planner import CONFIRMATION_TEXT
+    if payload.confirmation_text != CONFIRMATION_TEXT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid confirmation text. Must be '{CONFIRMATION_TEXT}'"
+        )
+
+    import uuid
+    job_id = str(uuid.uuid4())
+    job_data = {
+        "status": "running",
+        "created_at": datetime.utcnow().isoformat(),
+        "result": None,
+        "error": None
+    }
+    save_job_status(job_id, job_data)
+    background_tasks.add_task(run_reset_job, job_id, current_user.email)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/admin/reset-planner/status/{job_id}")
+def admin_reset_planner_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    if current_user.email != settings.admin_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Admin access required"
+        )
+    job = get_job_status(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found"
+        )
+    return job

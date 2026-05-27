@@ -1,5 +1,6 @@
 .env
 backend/.env
+backend/backups/
 frontend/.env
 *.pyc
 __pycache__/
